@@ -46,6 +46,10 @@ AG 参考插件的 loader 写死了 Base URL，不能直接复用这一部分。
 
 宿主支持该入口，插件仍需在真实宿主中验证开关状态、手填模型能力与实际上游请求。用户也接受供应商设置中的 Fast 开关作为入口。
 
+手填模型需同步进入插件声明的模型列表，并包含对应协议和 `serviceTiers`；仅在宿主填写一个插件尚未列出的 ID，不满足 `CanFast` 的 `listed` 条件。见 [plugins.go:343](https://github.com/yetone/magpie/blob/v0.1.4795/internal/provider/plugins.go#L343)。
+
+模型选项由 `CanFast` 派生 `fastFor`；点击闪电调用 `/api/agent-fast`，普通 Fast 保存为 `priority`。网关读取该选择后把 Responses 请求的 `service_tier` 设为 `priority`。见 [route.go:163](https://github.com/yetone/magpie/blob/v0.1.4795/internal/agent/route.go#L163)、[agent_models.go:300](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gui/agent_models.go#L300) 与 [groupfast.go:23](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/groupfast.go#L23)。
+
 ## 共用并发与配置入口
 
 宿主按 provider ID 和账号分别计数，名额从 Provider 调用前取得，到完整响应读完或取消才释放。插件内部等待和退避也占宿主名额。因此原生并发设置不能直接满足“整个插件共用 5、退避不占上游名额”。见 [gateway.go:4740](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L4740) 与 [gateway.go:4796](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L4796)。
