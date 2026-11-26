@@ -12,7 +12,7 @@
 - 采用纯 Provider 插件与请求中间件，同一客户端请求跨宿主调用共用重试预算。
 - 旧网关的错误分类、重试次数与等待节奏作为基准，差异必须有具体的兼容需求并记录。
 
-当前处于设计讨论阶段。资料在 [docs/research](docs/research/README.md)，架构决定存放在 `docs/adr/`。
+当前处于设计讨论阶段。[设计方案](docs/design.md)描述请求、重试和设置行为，[资料](docs/research/README.md)记录源码依据，架构决定存放在 `docs/adr/`。
 
 ## 已知限制
 

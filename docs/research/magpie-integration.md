@@ -42,13 +42,27 @@ AG 参考插件的 loader 写死了 Base URL，不能直接复用这一部分。
 
 宿主按 provider ID 和账号分别计数，名额从 Provider 调用前取得，到完整响应读完或取消才释放。插件内部等待和退避也占宿主名额。因此原生并发设置不能直接满足“整个插件共用 5、退避不占上游名额”。见 [gateway.go:4740](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L4740) 与 [gateway.go:4796](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L4796)。
 
-目前查到的正式插件输入没有提供供应商界面的 `maxConcurrency`。插件选项 JSON 可以保存独立数字配置，但保存会重启插件宿主；账号 metadata 的现成用户入口是登录问题表单，未找到通用直接编辑控件。不能据此承诺修改参数不影响在途请求。见 [host.js:1512](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/host.js#L1512)、[host.js:2210](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/host.js#L2210) 与 [store.go:758](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/store.go#L758)。
+正式插件输入没有提供供应商界面的 `maxConcurrency`。插件选项 JSON 可以保存独立数字配置，但保存会重载共享插件宿主，影响宿主内全部插件；账号 metadata 的现成用户入口是登录问题表单，未找到通用直接编辑控件。见 [host.js:1512](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/host.js#L1512)、[host.js:2210](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/host.js#L2210) 与 [pluginpage.go:598](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gui/pluginpage.go#L598)。
+
+重载时旧宿主继续处理已有请求，新请求交给新宿主；旧宿主最多保留 10 分钟。只用内存调度时，两个宿主各持有一份计数，因此频繁调整并发不能直接依赖这个保存入口。见 [host.go:848](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/host.go#L848)。
+
+## 专用设置页
+
+官方支持 `magpie.panels`、`magpie.page` 与 `magpie.page.service`。静态面板可以放在插件供应商的编辑器中，但使用 `magpie.options.set()` 仍会重载共享宿主。
+
+`magpie.page.service` 允许插件宿主提供本机页面服务。桌面客户端打开该服务页面，网页版通过 Magpie 反代；页面自己的配置请求可以直接更新当前插件状态，无需调用 options 保存链。插件需要自行实现配置持久化和更新逻辑，聊天 Key 继续由 Magpie 管理。见 [plugin-runtime.md:296](https://github.com/yetone/magpie/blob/v0.1.4795/docs/subsystems/plugin-runtime.md#L296) 与 [pageservice.go:17](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gui/pageservice.go#L17)。
+
+这为频繁修改地址和共用并发提供了正式页面入口；页面服务承载设置，模型请求仍走 Provider。它不需要用户单独启动外置网关。
 
 ## 整段缓存的等待边界
 
 插件宿主等待首响应以及两块响应之间静默的上限都是 30 分钟，客户端取消会传进插件。更早的限制可能来自客户端：Magpie 约 3 秒后发流式响应头，再定期发 SSE 注释保活，但源码记录 Codex 的空闲计时只认事件，不认注释。宿主自己的缓冲会在约 4 分钟时尝试释放已有事件；插件如果一直隐藏事件，宿主就没有内容可释放。
 
-因此整段缓存的代价不仅是看不到逐字输出，还包括长回复可能先撞客户端超时。当前 Codex 的具体超时配置尚未核对，不能将源码提到的历史默认值当成本机实际配置。见 [host.go:2183](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/host.go#L2183) 与 [fallback.go:3476](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/fallback.go#L3476)。
+因此整段缓存的代价不仅是看不到逐字输出，还包括长回复可能先撞客户端超时。见 [host.go:2183](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/host.go#L2183) 与 [fallback.go:3476](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/fallback.go#L3476)。
+
+2026-11-26 检查到本机 Codex 为 `0.171.0-alpha.13.2`，磁盘配置选用 `magpie` provider，未显式设置 `stream_idle_timeout_ms`，运行命令也没有对应覆盖。当前[官方配置参考](https://developers.openai.com/codex/config-reference/)规定该项默认 300000 毫秒。现有证据支持按 5 分钟流闲置窗口设计，但未实测运行中超时。
+
+旧网关 300 秒准入期限内开始的最后一次尝试最多继续 900 秒，可能约 20 分钟才交付。候选接入方案是在 `[model_providers.magpie]` 设置 25 分钟流闲置窗口，留出交付余量；这是整个 Codex Magpie provider 的设置，不是单个插件设置，需要用户确认。Magpie 以后重新导出配置是否保留这个字段尚未验证。
 
 ## 已知限制
 
