@@ -19,6 +19,7 @@
 - [喜鹊ag网关](codex://threads/01a2129f-a7a6-7212-ba64-aa44f7927c8c) 的实际接入记录。
 - [旧网关行为](qiandao-behavior.md)：基于提交 `4119d7891fe4af0b978d1a238041e91f072c6b02`。
 - [Magpie 接入边界](magpie-integration.md)：基于当前安装版本 `0.1.4795`。
+- [接入方案比较](architecture-options.md)：比较 Provider 插件、独立后台网关和共享插件宿主内监听，列出待讨论的真实行为差异。
 
 ## 客户端与设置边界
 
