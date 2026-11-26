@@ -38,6 +38,18 @@ AG 参考插件的 loader 写死了 Base URL，不能直接复用这一部分。
 
 模型支持推理时，声明 `reasoning: true` 可沿用宿主模型目录中的档位。默认强度不由插件补写。服务等级需要正确声明 `serviceTiers`，并验证上游实际收到的字段；客户端选择 Priority 不代表上游实际执行了 Priority。见 [plugins.go:429](https://github.com/yetone/magpie/blob/v0.1.4795/internal/provider/plugins.go#L429) 与 [gateway.go:8984](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L8984)。
 
+## 共用并发与配置入口
+
+宿主按 provider ID 和账号分别计数，名额从 Provider 调用前取得，到完整响应读完或取消才释放。插件内部等待和退避也占宿主名额。因此原生并发设置不能直接满足“整个插件共用 5、退避不占上游名额”。见 [gateway.go:4740](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L4740) 与 [gateway.go:4796](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L4796)。
+
+目前查到的正式插件输入没有提供供应商界面的 `maxConcurrency`。插件选项 JSON 可以保存独立数字配置，但保存会重启插件宿主；账号 metadata 的现成用户入口是登录问题表单，未找到通用直接编辑控件。不能据此承诺修改参数不影响在途请求。见 [host.js:1512](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/host.js#L1512)、[host.js:2210](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/host.js#L2210) 与 [store.go:758](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/store.go#L758)。
+
+## 整段缓存的等待边界
+
+插件宿主等待首响应以及两块响应之间静默的上限都是 30 分钟，客户端取消会传进插件。更早的限制可能来自客户端：Magpie 约 3 秒后发流式响应头，再定期发 SSE 注释保活，但源码记录 Codex 的空闲计时只认事件，不认注释。宿主自己的缓冲会在约 4 分钟时尝试释放已有事件；插件如果一直隐藏事件，宿主就没有内容可释放。
+
+因此整段缓存的代价不仅是看不到逐字输出，还包括长回复可能先撞客户端超时。当前 Codex 的具体超时配置尚未核对，不能将源码提到的历史默认值当成本机实际配置。见 [host.go:2183](https://github.com/yetone/magpie/blob/v0.1.4795/internal/plugin/host.go#L2183) 与 [fallback.go:3476](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/fallback.go#L3476)。
+
 ## 已知限制
 
 不跨站和保留会话字段有利于缓存连续性，但千刀内部如何分配请求、是否命中缓存，不能由本地插件保证。公告是否认可这种插件使用方式也尚无明确证据。
