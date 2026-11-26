@@ -51,6 +51,8 @@ Completed Responses with no answer, refusal, or usable output are recovered insi
 
 On its native Codex route, dao forwards QianDao's tool events without rewriting them. Tool discovery, free-form patches and namespaced calls keep their original formats. If Magpie takes over web search and offers it as a function, dao sends the request Magpie prepared and lets Magpie translate the reply. A streamed batch with a missing client tool call is recovered before any of its calls are delivered.
 
+For Codex V2 subagents, dao offers `spawn_agent`, `send_message` and `followup_task` upstream as plain functions. Magpie maps them back to Codex's collaboration tools, with the message readable by the recipient. Existing sealed tasks cannot be reopened: start a new task after updating. The plugin does not decrypt stored messages or change other providers or Codex settings.
+
 | Policy | Default |
 | --- | --- |
 | Maximum upstream attempts | 7, including the first request |
@@ -90,7 +92,7 @@ npm pack
 Pass a release archive as the final argument to test its contents:
 
 ```sh
-node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.9.tgz
+node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.10.tgz
 ```
 
 For comparison with the original gateway:
@@ -102,7 +104,7 @@ npm run test:parity
 
 You can also pass the original gateway file to `node tests/parity.mjs /path/to/gateway.mjs`.
 
-Validation covers 48 core and contract tests. Isolated host checks cover tool discovery, native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. Browser checks exercise the settings page inside Magpie's `allow-scripts` iframe: clicking Save writes the URL and concurrency, invalid values remain unsaved, Enter saves, and the provider successfully uses the saved URL.
+Validation covers 49 core and contract tests. Isolated host checks cover V2 handoff calls, tool discovery, native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. Browser checks exercise the settings page inside Magpie's `allow-scripts` iframe: clicking Save writes the URL and concurrency, invalid values remain unsaved, Enter saves, and the provider successfully uses the saved URL.
 
 For the browser regression, `node tests/settings-browser-fixture.mjs` serves the actual settings page in an `allow-scripts` iframe and writes its test URL and settings path to `.sandbox/settings-browser-session.json`. Open that URL with the Ego browser SDK and run the exported `checkSettingsSave(page, { settings, baseURL: "https://example.invalid" })` from `tests/settings-browser.mjs`. It checks the persisted file as well as the visible success message. Stop the fixture with Ctrl+C when finished.
 

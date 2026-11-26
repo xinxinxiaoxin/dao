@@ -83,6 +83,7 @@ const upstream = http.createServer(async (req, res) => {
   const body = JSON.parse(raw || '{}');
   captures.push({ body, url: req.url, headers: req.headers, at: Date.now() });
   active++; peak = Math.max(peak, active); res.once('close', () => { active--; });
+  if (mode === 'handoff') return responseItems(res, ['spawn_agent','send_message','followup_task'].map(name => ({ type: 'function_call', id: `fc_${name}`, call_id: `call_${name}`, name: `collaboration__${name}`, status: 'completed', arguments: JSON.stringify({ message: 'Read the fixture.' }) })), 'resp_handoff');
   if (mode === 'tool-search') {
     const tools = [...body.tools || [], ...(body.input || []).filter(item => item.type === 'additional_tools').flatMap(item => item.tools)];
     const search = tools.find(tool => tool.type === 'tool_search' || tool.name === 'tool_search');
@@ -270,6 +271,36 @@ try {
   assert.deepEqual((await savedProvider()).models, picksBefore.filter(id => id !== 'remote-new'), 'Reopening should remove only the delisted upstream pick');
   console.log('PASS: native model refresh updates candidates without selecting them; closure keeps models and login, balance is unavailable rather than zero');
   const post = (body = {}, signal = AbortSignal.timeout(20000)) => fetch(`http://${addr}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'codex_cli_rs/fixture', originator: 'codex_cli_rs', 'session-id': 'fixture-session', 'thread-id': 'fixture-thread' }, body: JSON.stringify({ model: 'qiandao-gateway/gpt-6-astra', input: 'fixture', stream: false, ...body }), signal });
+  {
+    const names = ['spawn_agent', 'send_message', 'followup_task'];
+    const definition = name => ({ type: 'function', name, parameters: { type: 'object', properties: { message: { type: 'string', encrypted: true } } } });
+    const group = { type: 'namespace', name: 'collaboration', tools: names.map(definition) };
+    mode = 'handoff';
+    for (const placement of ['tools', 'additional_tools', 'tool_search_output']) for (const withWeb of [true, false]) {
+      const input = [{ type: 'message', role: 'user', content: 'Delegate the fixture.' }];
+      const tools = withWeb ? [{ type: 'web_search' }] : [];
+      if (placement === 'tools') tools.push(group);
+      else if (placement === 'additional_tools') input.unshift({ type: placement, role: 'developer', tools: [group] });
+      else input.unshift({ type: 'tool_search_call', execution: 'client', call_id: 'call_load', arguments: { query: 'collaboration' } }, { type: placement, execution: 'client', call_id: 'call_load', tools: [group] });
+      if (placement === 'tool_search_output') tools.push({ type: 'tool_search', execution: 'client', description: 'Find tools', parameters: { type: 'object', properties: { query: { type: 'string' } } } });
+      const response = await post({ stream: true, tools, input });
+      const reply = await response.text(); assert.equal(response.status, 200, reply);
+      const returned = reply.split(/\r?\n/).filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6))).filter(event => event.type === 'response.output_item.done').map(event => event.item);
+      assert.equal(returned.length, names.length);
+      const sent = captures.at(-1).body;
+      const definitions = [...sent.tools || [], ...(sent.input || []).flatMap(item => item.tools || [])].flatMap(item => item.type === 'namespace' ? item.tools : [item]);
+      for (const name of names) {
+        const tool = definitions.find(item => item.name === name || item.name === `collaboration__${name}`);
+        assert.equal(tool?.parameters?.properties?.message?.type, 'string', `${placement}: lost ${name}`);
+        assert.equal(tool.name, `collaboration__${name}`, 'Do not alter the schema of a reserved upstream function');
+        assert.notEqual(tool.parameters.properties.message.encrypted, true, `${placement}, web=${withWeb}: ${name} requests an unreadable sealed task`);
+        const call = returned.find(item => item.call_id === `call_${name}`);
+        assert.equal(call?.namespace, 'collaboration', `${placement}, web=${withWeb}: ${name} lost its namespace`);
+        assert.equal(call.name, name); assert.deepEqual(call.encrypted_function_args, []); assert.deepEqual(JSON.parse(call.arguments), { message: 'Read the fixture.' });
+      }
+    }
+    console.log('PASS: Codex V2 task, message and follow-up tools request readable text with or without web search');
+  }
   mode = 'wire';
   if (originalPort) {
     const setOutput = output => { wireOutput = output; };
