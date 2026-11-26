@@ -425,9 +425,24 @@ try {
   assert.match(await launch.text(), /location.replace/);
   let html;
   for (let i = 0; i < 50; i++) { try { html = await (await fetch(page)).text(); if (html.includes('PAGE_TOKEN')) throw new Error('missing token'); break; } catch { await delay(100); } }
+  assert.match(html, /上游报错记录/);
+  assert.match(html, /重试等待/);
   const token = html.match(/const token='([^']+)'/)[1];
+  const pageState = async () => {
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      try {
+        const response = await fetch(`${page}/api/state`, { headers: { 'x-qiandao-page': token } });
+        assert.equal(response.status, 200);
+        return response.json();
+      } catch (error) {
+        if (error.cause?.code !== 'ECONNREFUSED' || Date.now() >= deadline) throw error;
+        await delay(100);
+      }
+    }
+  };
   const save = async change => {
-    const current = await (await fetch(`${page}/api/state`, { headers: { 'x-qiandao-page': token } })).json();
+    const current = await pageState();
     const res = await fetch(`${page}/api/settings`, { method: 'PUT', headers: { 'x-qiandao-page': token, 'content-type': 'application/json' }, body: JSON.stringify({ ...current.settings, ...change }) });
     assert.equal(res.status, 200, await res.text());
   };
@@ -461,9 +476,19 @@ try {
   const failed = await post({ stream: true }); const errorEvent = await failed.text(); assert.match(errorEvent, /context_length_exceeded/); assert.equal(captures.length - beforeContext, 1);
   console.log('PASS: context limit reaches the client as an SSE failure, one upstream send');
   mode = 'rate'; const beforeRate = captures.length;
+  const beforeHistory = (await pageState()).upstreamHistory;
+  const startedRate = Date.now();
   const exhausted = await post({}, AbortSignal.timeout(80000)); await exhausted.text();
   assert.equal(captures.length - beforeRate, 3, log);
-  console.log('PASS: persistent 429 across host attempts, exactly three configured upstream sends');
+  const afterHistory = (await pageState()).upstreamHistory;
+  assert.equal(afterHistory.attempts, Math.min(100, beforeHistory.attempts + 3));
+  const logged = afterHistory.errors.slice(0, 3);
+  assert.deepEqual(logged.map(row => [row.status, row.attempt, row.message, row.recovered]),
+    [3, 2, 1].map(attempt => [429, attempt, '请求太多，千刀限流了', false]));
+  assert.ok(logged.every(row => row.time >= startedRate && row.time <= Date.now()));
+  assert.deepEqual(logged.map(row => row.retryDelayMs), [null, 20, 20]);
+  assert.ok(logged.slice(1).every(row => row.actualRetryMs >= 20));
+  console.log('PASS: persistent 429 has three upstream sends, two recorded retry waits, and no retry after the cap');
   mode = 'closed'; const beforeClosed = captures.length;
   const closedReply = await post({}, AbortSignal.timeout(80000)); const closedText = await closedReply.text();
   assert.equal(captures.length - beforeClosed, 3);

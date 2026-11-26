@@ -2,18 +2,157 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>dao</title>
 <style>
 :root{color-scheme:light dark;font-family:system-ui,"Microsoft YaHei",sans-serif;background:light-dark(#f5f6fa,#191a20);color:light-dark(#202333,#ececf3)}*{box-sizing:border-box}body{margin:0;padding:32px 22px}main{max-width:840px;margin:auto}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:26px}h1{font-size:27px;letter-spacing:-.5px;margin:0 0 7px}p{margin:6px 0;color:light-dark(#62687b,#a8acbf);line-height:1.6}section{background:light-dark(white,#24252e);border:1px solid light-dark(#e3e5ee,#353745);border-radius:16px;padding:24px;margin:18px 0}h2{font-size:17px;margin:0 0 20px}.badge{font-size:12px;padding:7px 12px;border-radius:30px;background:#7266e52a;color:light-dark(#5849b5,#c3baff)}label{display:block;font-size:14px;margin:18px 0 8px;font-weight:600}input,textarea{width:100%;font:inherit;padding:11px 12px;border:1px solid light-dark(#ccd0df,#484b5e);border-radius:8px;background:light-dark(#fafbff,#1b1d25);color:inherit}textarea{resize:vertical;min-height:90px;font-family:ui-monospace,monospace}input:focus,textarea:focus{outline:2px solid #8d83eb;outline-offset:1px}.hint{font-size:12px;margin-top:7px}.row{display:flex;gap:20px;align-items:end}.row>div{flex:1}.row .narrow{max-width:170px}button{background:#7968e6;color:white;font:inherit;border:0;border-radius:9px;padding:11px 21px;cursor:pointer;font-weight:600}button:disabled{opacity:.6}.actions{display:flex;align-items:center;gap:16px;margin-top:22px}#notice{font-size:13px;color:light-dark(#5849b5,#c3baff)}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.stat{padding:15px;border-radius:10px;background:light-dark(#f5f6fb,#1d1f28)}.stat span{display:block;font-size:12px;color:light-dark(#666d80,#a7aec1)}.stat strong{display:block;font-size:26px;margin-top:6px}table{width:100%;border-collapse:collapse;font-size:13px;margin-top:18px}td,th{text-align:left;padding:10px 5px;border-bottom:1px solid light-dark(#eceef4,#353745)}th{font-weight:500;color:light-dark(#777e91,#a7aec1)}#empty{font-size:13px;margin-top:20px}@media(max-width:520px){body{padding:22px 12px}section{padding:18px}.row{display:block}.row .narrow{max-width:none}.stats{gap:6px}.stat{padding:10px}header{align-items:start}}
+.tabs{display:flex;gap:20px;border-bottom:1px solid light-dark(#e3e5ee,#353745)}.tabs button,.log-controls button{background:transparent;color:inherit;font-size:13px}.tabs button{padding:9px 2px;border-radius:0;border-bottom:2px solid transparent}.tabs button[aria-selected=true]{border-bottom-color:light-dark(#5849b5,#a99dfb)}.tab-count{margin-left:4px;font-variant-numeric:tabular-nums}.log-heading,.log-controls{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}.log-heading h2{margin:0}.log-heading p{margin:0}.retry-policy{display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:8px 18px;margin:14px 0;font-size:13px}.retry-policy dt{color:light-dark(#62687b,#a8acbf)}.retry-policy dd{margin:4px 0 0;font-variant-numeric:tabular-nums}.filters,.pager{display:flex;align-items:center;flex-wrap:wrap;gap:6px}.log-controls button{padding:6px 8px;border:1px solid light-dark(#e3e5ee,#484b5e);border-radius:6px;white-space:nowrap}.log-controls button[aria-pressed=true]{background:light-dark(#eeebfb,#383450);border-color:light-dark(#d4cbf6,#67608f)}.pager{font-size:12px;font-variant-numeric:tabular-nums}.pager[hidden]{display:none}.error-log{overflow-x:auto;margin-top:12px}.error-log table{min-width:590px;margin-top:0}.error-log td{vertical-align:top}.error-log time,.error-log td:nth-child(2),.error-log td:last-child{font-variant-numeric:tabular-nums}.error-log td:nth-child(3){white-space:nowrap}.retry-plan{display:block;margin-top:3px;font-size:11px;color:light-dark(#62687b,#a8acbf)}#upstreamSummary{font-size:13px}#logEmpty{margin-top:14px;font-size:13px}@media(max-width:640px){.retry-policy{grid-template-columns:1fr 1fr}.retry-policy div:last-child{grid-column:1/-1}}
+.log-controls{position:sticky;top:0;z-index:1;padding:6px 0;background:light-dark(white,#24252e)}
+@media(max-width:680px){.error-log table,.error-log tbody{display:block;min-width:0}.error-log thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.error-log tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.8fr) auto;gap:0 8px;padding:8px 0;border-top:1px solid light-dark(#eceef4,#353745)}.error-log td{border:0;padding:3px 0;overflow-wrap:anywhere}.error-log td:nth-last-child(-n+2){grid-column:1/-1}.error-log td:last-child{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 8px}.retry-plan{margin-top:0}}
 </style></head><body><main>
 <header><div><h1>dao</h1><p>连接千刀，让临时错误在当前请求里恢复。</p></div><span class="badge">Magpie 插件</span></header>
+<nav class="tabs" id="viewTabs" role="tablist" aria-label="dao 页面">
+<button id="connectionTab" type="button" role="tab" aria-selected="true" aria-controls="connectionPanel">连接与状态</button>
+<button id="errorsTab" type="button" role="tab" aria-selected="false" aria-controls="errorsPanel" tabindex="-1">报错记录 <span class="tab-count" id="tabErrorCount"></span></button>
+</nav>
+<div id="connectionPanel" role="tabpanel" aria-labelledby="connectionTab">
 <section><h2>连接与并发</h2><div id="settings">
 <label for="baseURL">千刀 Base URL</label><input id="baseURL" type="url" placeholder="https://api666.zzzcoding.org" required autocomplete="off"><p class="hint">填千刀的服务地址。只填域名时会使用 /v1；保存后用于新请求。</p>
 <div class="row"><div><label for="models">手填模型（可选）</label><textarea id="models" spellcheck="false" placeholder="每行一个模型名称，可留空"></textarea><p class="hint">在 dao 供应商里点“获取模型／预下载模型”，刷新千刀当前开放的列表后自行勾选。这里仅补充你要手填的模型；填入的名称会一直保留在候选列表。</p></div><div class="narrow"><label for="maxConcurrency">总并发上限</label><input id="maxConcurrency" type="number" min="1" step="1" required><p class="hint">全部对话和账号共用。调低后，已有请求继续，新请求等待。</p></div></div>
 <div class="actions"><button id="save" type="button">保存设置</button><span id="notice" role="status"></span></div></div></section>
-<section><h2>当前状态</h2><div class="stats"><div class="stat"><span>正在请求</span><strong id="active">0</strong></div><div class="stat"><span>正在排队</span><strong id="queued">0</strong></div><div class="stat"><span>冷却剩余</span><strong id="cooldown">0 秒</strong></div></div><table id="history" hidden><thead><tr><th>时间</th><th>结果</th><th>尝试</th><th>耗时</th></tr></thead><tbody></tbody></table><p id="empty">还没有完成的请求。</p></section>
+<section><h2>当前状态</h2><div class="stats"><div class="stat"><span>正在请求</span><strong id="active">0</strong></div><div class="stat"><span>正在排队</span><strong id="queued">0</strong></div><div class="stat"><span>共享冷却剩余</span><strong id="cooldown">0 秒</strong></div></div><table id="history" hidden><thead><tr><th>时间</th><th>结果</th><th>尝试</th><th>耗时</th></tr></thead><tbody></tbody></table><p id="empty">还没有完成的请求。</p></section>
 <p class="hint">API Key 在“dao”供应商里填写，余额显示在该账号的用量信息中。千刀暂时关闭时，模型列表会保留，余额旁会提示查询失败；之前的余额仅供参考。Fast 使用模型选择器右侧的闪电开关。回答完整生成后再交付，等待时不会逐字显示。</p>
+</div>
+<div id="errorsPanel" role="tabpanel" aria-labelledby="errorsTab" hidden>
+<section aria-labelledby="upstreamTitle">
+<div class="log-heading"><h2 id="upstreamTitle">上游报错记录</h2><p class="hint">共享冷却剩余 <strong id="logCooldown">0 秒</strong></p></div>
+<p id="upstreamSummary">正在读取记录……</p>
+<dl class="retry-policy"><div><dt>每次请求上限</dt><dd id="retryLimit">…</dd></div><div><dt>限流重试间隔</dt><dd id="rateDelays">…</dd></div><div><dt>其他临时错误重试间隔</dt><dd id="errorDelays">…</dd></div></dl>
+<div class="log-controls">
+<div class="filters" id="errorFilters" role="group" aria-label="报错类型">
+<button type="button" data-category="all" aria-pressed="true">全部 <span></span></button><button type="button" data-category="rate" aria-pressed="false">限流 <span></span></button><button type="button" data-category="service" aria-pressed="false">服务与连接 <span></span></button><button type="button" data-category="other" aria-pressed="false">其他 <span></span></button>
+</div>
+<div class="pager" id="errorPager" hidden><button id="prevErrors" type="button">上一页</button><span id="errorRange" aria-live="polite"></span><button id="nextErrors" type="button">下一页</button></div>
+</div>
+<p id="logEmpty" hidden></p>
+<div class="error-log" id="upstreamErrors" hidden><table><thead><tr><th scope="col">时间（本机）</th><th scope="col">状态码</th><th scope="col">尝试</th><th scope="col">报错原因</th><th scope="col">重试等待</th></tr></thead><tbody></tbody></table></div>
+</section>
+</div>
 </main><script>
 const token='__PAGE_TOKEN__';const $=id=>document.getElementById(id);let loaded=false;
+const timestamp=new Intl.DateTimeFormat('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
+const percent=new Intl.NumberFormat('zh-CN',{style:'percent',maximumFractionDigits:1});
+const seconds=new Intl.NumberFormat('zh-CN',{maximumFractionDigits:2,useGrouping:false});
+const formatSeconds=ms=>seconds.format(ms/1000);
+const pageSize=20;
+const filters=$('errorFilters').querySelectorAll('button');
+const tabs=Array.from($('viewTabs').querySelectorAll('button'));
+let lastUpstreamHistory,report,selectedCategory='all',errorPage=0,cooldownUntil=0;
+function selectTab(selected){
+  for(const tab of tabs){
+    const active=tab===selected;
+    tab.setAttribute('aria-selected',String(active));
+    tab.tabIndex=active?0:-1;
+    $(tab.getAttribute('aria-controls')).hidden=!active;
+  }
+}
+function renderCooldown(){
+  const text=`${Math.max(0,Math.ceil((cooldownUntil-Date.now())/1000))} 秒`;
+  $('cooldown').textContent=text;$('logCooldown').textContent=text;
+}
+function renderRetryPolicy(policy){
+  const intervals=delays=>delays.length?`${delays.map(formatSeconds).join(' / ')} 秒`:'不重试';
+  $('retryLimit').textContent=`最多 ${policy.maxAttempts} 次（含首次）`;
+  $('rateDelays').textContent=intervals(policy.rateDelays.slice(0,policy.maxAttempts-1));
+  $('errorDelays').textContent=intervals(policy.errorDelays.slice(0,policy.maxAttempts-1));
+}
+function retryWait(row){
+  if(Number.isFinite(row.actualRetryMs))return `实等 ${formatSeconds(row.actualRetryMs)} 秒`;
+  if(Number.isFinite(row.retryDelayMs))return `最早 ${formatSeconds(row.retryDelayMs)} 秒后`;
+  return row.retryDelayMs===null?'不再重试':'未记录';
+}
+function renderUpstreamHistory(nextReport){
+  const snapshot=JSON.stringify(nextReport);
+  if(snapshot===lastUpstreamHistory)return;
+  lastUpstreamHistory=snapshot;
+  report=nextReport;
+  const {attempts,errors,limit}=report;
+  const capacity=`最多保留 ${limit} 次尝试`;
+  $('upstreamSummary').textContent=attempts?`最近 ${attempts} 次上游尝试，${errors.length} 次报错（${percent.format(errors.length/attempts)}） · ${capacity}`:`暂无上游尝试记录 · ${capacity}`;
+  $('tabErrorCount').textContent=errors.length;
+  const counts={all:errors.length,rate:0,service:0,other:0};
+  for(const row of errors)counts[row.category]++;
+  for(const filter of filters)filter.querySelector('span').textContent=counts[filter.dataset.category];
+  renderErrorPage();
+}
+function renderErrorPage(){
+  if(!report)return;
+  const filtered=selectedCategory==='all'?report.errors:report.errors.filter(row=>row.category===selectedCategory);
+  const pages=Math.ceil(filtered.length/pageSize);
+  errorPage=Math.max(0,Math.min(errorPage,pages-1));
+  const offset=errorPage*pageSize;
+  const entries=filtered.slice(offset,offset+pageSize);
+  $('logEmpty').hidden=!!entries.length||!report.attempts;
+  $('logEmpty').textContent=selectedCategory==='all'?'这批尝试没有报错。':'这个分类没有报错。';
+  $('errorPager').hidden=!entries.length;
+  $('prevErrors').disabled=errorPage===0;
+  $('nextErrors').disabled=errorPage>=pages-1;
+  $('errorRange').textContent=entries.length?`${offset+1}–${offset+entries.length} / ${filtered.length}`:'';
+  const log=$('upstreamErrors');const tbody=log.querySelector('tbody');
+  const rows=entries.map(row=>{
+    const tr=document.createElement('tr');
+    const time=document.createElement('time');const date=new Date(row.time);
+    time.dateTime=date.toISOString();time.textContent=timestamp.format(date);
+    let code=row.status===null?'无 HTTP 码':`HTTP ${row.status}`;
+    if(row.errorCode&&row.errorCode!==String(row.status))code+=` / 上游 ${row.errorCode}`;
+    for(const value of [time,code,`第 ${row.attempt} 次`,row.message+(row.recovered?'（已恢复）':'')]){
+      const td=document.createElement('td');td.append(value);tr.append(td);
+    }
+    const timing=document.createElement('td');timing.textContent=retryWait(row);
+    if(Number.isFinite(row.actualRetryMs)&&Number.isFinite(row.retryDelayMs)){
+      const plan=document.createElement('span');plan.className='retry-plan';
+      plan.textContent=`原计划最早 ${formatSeconds(row.retryDelayMs)} 秒后`;timing.append(plan);
+    }
+    tr.append(timing);
+    return tr;
+  });
+  tbody.replaceChildren(...rows);log.hidden=!rows.length;
+}
 async function api(path,options={}){const response=await fetch(new URL(path,location.href),{...options,headers:{'x-qiandao-page':token,...options.headers}});const data=await response.json();if(!response.ok)throw new Error(data.error||'请求失败');return data}
-async function refresh(){try{const data=await api('api/state');if(!loaded){$('baseURL').value=data.settings.baseURL;$('maxConcurrency').value=data.settings.maxConcurrency;$('models').value=data.settings.models.join('\n');loaded=true}$('active').textContent=data.scheduler.active;$('queued').textContent=data.scheduler.queued;$('cooldown').textContent=Math.max(0,Math.ceil((data.scheduler.cooldownUntil-Date.now())/1000))+' 秒';const tbody=$('history').querySelector('tbody');tbody.replaceChildren();for(const row of data.recent){const tr=document.createElement('tr');for(const value of [new Date(row.time).toLocaleTimeString('zh-CN'),row.phase,row.attempts+' 次',(row.ms/1000).toFixed(1)+' 秒']){const td=document.createElement('td');td.textContent=value;tr.append(td)}tbody.append(tr)}$('history').hidden=!data.recent.length;$('empty').hidden=!!data.recent.length}catch(error){$('notice').textContent=error.message}}
+async function refresh(){
+  try{
+    const data=await api('api/state');
+    if(!loaded){
+      $('baseURL').value=data.settings.baseURL;$('maxConcurrency').value=data.settings.maxConcurrency;
+      $('models').value=data.settings.models.join('\n');renderRetryPolicy(data.retryPolicy);loaded=true;
+    }
+    $('active').textContent=data.scheduler.active;$('queued').textContent=data.scheduler.queued;
+    cooldownUntil=data.scheduler.cooldownUntil;renderCooldown();
+    const tbody=$('history').querySelector('tbody');tbody.replaceChildren();
+    for(const row of data.recent){
+      const tr=document.createElement('tr');
+      for(const value of [new Date(row.time).toLocaleTimeString('zh-CN'),row.phase,row.attempts+' 次',(row.ms/1000).toFixed(1)+' 秒']){
+        const td=document.createElement('td');td.textContent=value;tr.append(td);
+      }
+      tbody.append(tr);
+    }
+    $('history').hidden=!data.recent.length;$('empty').hidden=!!data.recent.length;
+    renderUpstreamHistory(data.upstreamHistory);
+  }catch(error){$('notice').textContent=error.message;if(!loaded)$('upstreamSummary').textContent='暂时读不到上游记录。';}
+}
 async function saveSettings(){if($('save').disabled)return;for(const id of ['baseURL','maxConcurrency']){if(!$(id).checkValidity()){$('notice').textContent=$(id).validationMessage;$(id).reportValidity();return}}$('save').disabled=true;$('notice').textContent='正在保存……';try{const data=await api('api/settings',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({baseURL:$('baseURL').value,maxConcurrency:Number($('maxConcurrency').value),models:$('models').value})});$('baseURL').value=data.settings.baseURL;$('notice').textContent='已保存，设置已生效。';await refresh()}catch(error){$('notice').textContent=error.message}finally{$('save').disabled=false}}
-$('save').onclick=saveSettings;for(const id of ['baseURL','maxConcurrency'])$(id).onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();saveSettings()}};refresh();setInterval(refresh,2000);
+for(const tab of tabs){
+  tab.onclick=()=>selectTab(tab);
+  tab.onkeydown=event=>{
+    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+    event.preventDefault();
+    const selected=event.key==='Home'?tabs[0]:event.key==='End'?tabs.at(-1):tabs.find(other=>other!==tab);
+    selectTab(selected);selected.focus();
+  };
+}
+for(const filter of filters)filter.onclick=()=>{
+  selectedCategory=filter.dataset.category;errorPage=0;
+  for(const button of filters)button.setAttribute('aria-pressed',String(button===filter));
+  renderErrorPage();
+};
+$('prevErrors').onclick=()=>{errorPage--;renderErrorPage();};
+$('nextErrors').onclick=()=>{errorPage++;renderErrorPage();};
+$('save').onclick=saveSettings;for(const id of ['baseURL','maxConcurrency'])$(id).onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();saveSettings()}};
+refresh();setInterval(refresh,2000);setInterval(renderCooldown,1000);
 </script></body></html>

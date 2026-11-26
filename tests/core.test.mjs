@@ -182,7 +182,7 @@ test('Provider还原Codex字段、原生Fast、地址热改及手填模型', asy
 
 test('设置页保存并发和地址无需重建Provider', async t => {
   const { settings, scheduler } = await fixture(t);
-  const server = await startPage({ settings, scheduler, relay: { recent: [] } }, 0);
+  const server = await startPage({ settings, scheduler, relay: new Relay(scheduler) }, 0);
   t.after(() => new Promise(resolve => server.close(resolve)));
   const url = `http://127.0.0.1:${server.address().port}`;
   const html = await (await fetch(url)).text();

@@ -1,43 +1,56 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Relay } from '../lib/relay.mjs';
+import { summarizeAttempts } from '../lib/attempt-history.mjs';
 
 function fixture(t, replies, policy = {}) {
   const now = Date.UTC(2026, 10, 26);
   t.mock.timers.enable({ apis: ['Date'], now });
   let cooldownUntil = now, index = 0;
-  const waits = [], requests = [], sentAt = [];
+  const waits = [], requests = [], sentAt = [], records = [];
   const scheduler = {
     async acquire(signal, deadline) {
       signal.throwIfAborted();
       if (cooldownUntil >= deadline) { t.mock.timers.setTime(deadline); return null; }
       if (cooldownUntil > Date.now()) t.mock.timers.setTime(cooldownUntil);
-      return async () => {};
+      return async record => { if (record) records.unshift(record); };
     },
-    async cooldown(until) { waits.push(until - Date.now()); cooldownUntil = Math.max(cooldownUntil, until); },
+    async cooldown(until) { waits.push(until - Date.now()); cooldownUntil = Math.max(cooldownUntil, until); return cooldownUntil; },
     async snapshot() { return { cooldownUntil }; },
   };
   const relay = new Relay(scheduler, { policy, fetchUpstream: async req => {
     sentAt.push(Date.now() - now);
     requests.push(await req.text());
     let reply = replies[Math.min(index++, replies.length - 1)];
-    if (reply && typeof reply === 'object') { t.mock.timers.setTime(Date.now() + reply.elapsed); reply = reply.after; }
+    if (reply && typeof reply === 'object') {
+      t.mock.timers.setTime(Date.now() + (reply.elapsed ?? 0));
+      if (reply.sharedWait) cooldownUntil = Math.max(cooldownUntil, Date.now() + reply.sharedWait);
+      reply = reply.after;
+    }
     if (reply === 'ok') return Response.json({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'OK' }] }] });
     return Response.json({ error: { code: 'rate_limit_exceeded' } }, { status: 429, headers: reply === null ? {} : { 'retry-after': reply } });
   } });
   const request = () => new Request('https://example.invalid/v1/responses', { method: 'POST', body: JSON.stringify({ model: 'gpt-6-astra', service_tier: 'priority', input: 'unchanged' }) });
-  return { relay, request, waits, requests, sentAt, now };
+  return { relay, request, waits, requests, sentAt, now, records };
 }
 
 test('the first long Retry-After waits 30 seconds, then the next follows upstream', async t => {
-  const { relay, request, waits, requests, sentAt } = fixture(t, ['120', '90', 'ok']);
+  const { relay, request, waits, requests, sentAt, records } = fixture(t, ['120', '90', 'ok']);
   assert.equal((await relay.send(request(), { id: 'one', attempt: 1 })).status, 200);
   assert.deepEqual(waits, [30000, 90000]);
   assert.equal(requests.length, 3);
   assert.deepEqual(sentAt, [0, 30000, 120000]);
+  assert.deepEqual(summarizeAttempts(records).errors.map(row => [row.attempt, row.retryDelayMs, row.actualRetryMs]), [[2, 90000, 90000], [1, 30000, 30000]]);
   assert.ok(requests.every(x => x === requests[0]));
   assert.equal((await relay.send(request(), { id: 'one', attempt: 2 })).status, 409);
   assert.equal(requests.length, 3);
+});
+
+test('the history shows the shared cooldown and does not promise a retry outside the request budget', async t => {
+  const { relay, request, sentAt, records } = fixture(t, [{ after: '120', sharedWait: 35000 }, { after: '1', sharedWait: 270000 }]);
+  assert.equal((await relay.send(request(), { id: 'shared-delay', attempt: 1 })).status, 429);
+  assert.deepEqual(sentAt, [0, 35000]);
+  assert.deepEqual(summarizeAttempts(records).errors.map(row => [row.attempt, row.retryDelayMs, row.actualRetryMs]), [[2, null, undefined], [1, 35000, 35000]]);
 });
 
 test('a long Retry-After first seen later still gets exactly one 30-second wait', async t => {
