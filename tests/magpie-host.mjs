@@ -63,8 +63,17 @@ const upstream = http.createServer(async (req, res) => {
   active++; peak = Math.max(peak, active); res.once('close', () => { active--; });
   if (mode === 'codex-loop') {
     const inputs = Array.isArray(body.input) ? body.input : [];
-    if (inputs.some(x => x.call_id === 'call_dao_second' && /_output$/.test(x.type))) return responseItems(res, [{ type: 'message', id: 'msg_final', role: 'assistant', phase: 'final_answer', status: 'completed', content: [{ type: 'output_text', text: 'DAO_TOOL_LOOP_OK: 364', annotations: [], logprobs: [] }] }], 'resp_final');
-    if (inputs.some(x => x.call_id === 'call_dao_first' && /_output$/.test(x.type))) {
+    const toolResult = id => inputs.find(x => x.call_id === id && /_output$/.test(x.type));
+    const second = toolResult('call_dao_second');
+    if (second) {
+      assert.match(JSON.stringify(second.output), /\b364\b/, 'The second calculation did not run');
+      assert.doesNotMatch(JSON.stringify(second.output), /error|rejected|failed/i);
+      return responseItems(res, [{ type: 'message', id: 'msg_final', role: 'assistant', phase: 'final_answer', status: 'completed', content: [{ type: 'output_text', text: 'DAO_TOOL_LOOP_OK: 364', annotations: [], logprobs: [] }] }], 'resp_final');
+    }
+    const first = toolResult('call_dao_first');
+    if (first) {
+      assert.match(JSON.stringify(first.output), /\b323\b/, 'The first calculation did not run');
+      assert.doesNotMatch(JSON.stringify(first.output), /error|rejected|failed/i);
       assert.ok(inputs.some(x => x.role === 'assistant' && x.phase === 'commentary'), 'Assistant phase was dropped from tool history');
       if (!emptyTurnSent) { emptyTurnSent = true; return responseItems(res, [], 'resp_empty'); }
       return responseItems(res, [{ type: 'custom_tool_call', id: 'ctc_second', call_id: 'call_dao_second', name: 'exec', input: 'text(323 + 41)', status: 'completed' }], 'resp_second');
