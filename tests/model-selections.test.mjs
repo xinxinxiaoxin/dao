@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, writeFile, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { createProvider } from '../lib/provider.mjs';
+import { createSettings } from '../lib/settings.mjs';
+
+test('refresh records candidates without changing explicit picks or other providers', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'dao-picks-'));
+  t.after(async () => { assert.equal(dirname(await realpath(directory)), await realpath(tmpdir())); await rm(directory, { recursive: true, force: true }); });
+  const other = { id: 'other', models: ['other-model'], patience: 50 };
+  const dao = { id: 'qiandao-gateway', models: ['gpt-6-astra'], pickedFrom: ['gpt-6-astra'] };
+  const file = join(directory, 'providers.json');
+  await writeFile(file, JSON.stringify({ providers: [dao, other] }));
+  let ids = ['gpt-6-astra', 'gpt-6.1-sol', 'codex-auto-review', 'gpt-5.3-codex-spark'];
+  let closed = false;
+  const hooks = await createProvider({ noPage: true, metadataFetch: async () => closed ? new Response('', { status: 503 }) : Response.json({ data: ids.map(id => ({ id })) }) })({ directory, magpie: { account: () => 'qiandao-gateway' } });
+  const settings = await createSettings(join(directory, 'qiandao-gateway'));
+  await settings.save({ baseURL: 'https://example.invalid', models: [], maxConcurrency: 3 });
+  const list = () => hooks.provider.models({ models: {} }, { auth: { type: 'api', key: 'fixture' } });
+  assert.deepEqual(Object.keys(await list()), ids);
+  let stored = JSON.parse(await readFile(file, 'utf8'));
+  assert.deepEqual(stored.providers[0].models, ['gpt-6-astra']);
+  assert.deepEqual(stored.providers[0].pickedFrom, ids);
+  assert.deepEqual(stored.providers[1], other);
+  ids.push('future-model'); await list();
+  stored = JSON.parse(await readFile(file, 'utf8'));
+  assert.deepEqual(stored.providers[0].models, ['gpt-6-astra']);
+  assert.deepEqual(stored.providers[0].pickedFrom, ids);
+  closed = true; const before = await readFile(file, 'utf8'); await list();
+  assert.equal(await readFile(file, 'utf8'), before);
+  stored.providers[0].models = []; stored.providers[0].noModels = true;
+  await writeFile(file, JSON.stringify(stored)); closed = false; await list();
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).providers[0].noModels, true);
+});

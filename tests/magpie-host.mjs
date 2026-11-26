@@ -84,7 +84,8 @@ try {
   manifest.magpie.options.settingsPort = pagePort; manifest.magpie.page.service.port = pagePort;
   await json(path.join(fixture, 'package.json'), manifest);
   await json(path.join(config, 'settings.json'), { sessionReads: { asked: true, all: false, agents: {} } });
-  await json(path.join(config, 'providers.json'), { providers: [{ id: 'qiandao-gateway', models: ['gpt-6-astra', 'future-model'] }] });
+  await json(path.join(config, 'providers.json'), { providers: [{ id: 'qiandao-gateway', models: ['gpt-6-astra', 'future-model'], pickedFrom: ['gpt-6-astra', 'future-model'] }] });
+  await json(path.join(config, 'qiandao-gateway/manual-models.json'), ['future-model']);
   await json(path.join(config, 'qiandao-gateway/settings.json'), { baseURL: `http://127.0.0.1:${upstreamPort}/v1`, maxConcurrency: 2, models: ['gpt-6-astra', 'removable-model'] });
   const catalogDir = path.join(env.XDG_CACHE_HOME, 'magpie'); await mkdir(catalogDir, { recursive: true });
   await json(path.join(catalogDir, 'models.json'), { openai: { id: 'openai', models: { 'gpt-6-astra': { id: 'gpt-6-astra', reasoning: true, reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high', 'xhigh', 'max'] }] } } } });
@@ -117,6 +118,21 @@ try {
   assert.ok(models.some(x => x.id === 'remote-old'), 'Upstream models are missing');
   const savedProvider = async () => JSON.parse(await readFile(path.join(config, 'providers.json'), 'utf8')).providers.find(x => x.id === 'qiandao-gateway');
   let picksBefore = (await savedProvider()).models;
+  {
+    const pickState = async () => {
+      const p = (await webAPI('providers')).providers.find(x => x.id === 'qiandao-gateway');
+      return { chosen: p.chosen, models: p.models.map(x => ({ id: x.id, on: x.on })), stored: (await savedProvider()).models };
+    };
+    await webAPI('provider/save', { id: 'qiandao-gateway', models: picksBefore });
+    const subset = await pickState();
+    assert.deepEqual(subset.chosen, picksBefore, 'Deselecting a candidate must persist in the provider editor');
+    assert.deepEqual(subset.models.filter(x => x.on).map(x => x.id).sort(), [...picksBefore].sort());
+    await webAPI('provider/save', { id: 'qiandao-gateway', models: [], noModels: true });
+    const none = await pickState();
+    assert.deepEqual(none.models.filter(x => x.on), [], 'Select none must leave every candidate unselected');
+    await webAPI('provider/save', { id: 'qiandao-gateway', models: picksBefore });
+    console.log('PASS: saving the original subset does not auto-select new candidates; Select none also persists');
+  }
   remoteModels = ['gpt-6-astra', 'remote-new'];
   let fetched = await webAPI('provider/models', { id: 'qiandao-gateway' });
   assert.ok(JSON.stringify(fetched.provider).includes('remote-new'), JSON.stringify(fetched));
@@ -243,7 +259,10 @@ try {
   console.log('PASS: explicit Fast refusal is not retried as Standard');
   if (process.env.QIANDAO_UI_MODE === '1') {
     mode = 'pass';
-    await json(path.join(config, 'qiandao-gateway/settings.json'), { baseURL: '', maxConcurrency: 5, models: ['gpt-6-astra'] });
+    remoteModels = ['gpt-6-astra', 'gpt-6.1-sol', 'codex-auto-review', 'gpt-5.3-codex-spark'];
+    await json(path.join(config, 'qiandao-gateway/settings.json'), { baseURL: `http://127.0.0.1:${upstreamPort}/v1`, maxConcurrency: 5, models: [] });
+    await webAPI('provider/save', { id: 'qiandao-gateway', models: ['gpt-6-astra'] });
+    await webAPI('provider/models', { id: 'qiandao-gateway' });
     await writeFile(path.join(parent, 'ui-session.json'), JSON.stringify({ web, key: env.MAGPIE_WEB_KEY, page, pages, directory, settings: path.join(config, 'qiandao-gateway/settings.json'), upstreamURL: `http://127.0.0.1:${upstreamPort}` }));
     console.log('UI READY: isolated Magpie settings are available for browser validation');
     while (true) {

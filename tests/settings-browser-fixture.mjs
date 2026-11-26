@@ -11,9 +11,15 @@ const parent = fileURLToPath(new URL('../.sandbox/', import.meta.url));
 await mkdir(parent, { recursive: true });
 const directory = await mkdtemp(path.join(parent, 'settings-browser-'));
 const runtime = await createRuntime(directory);
-const page = await startPage(runtime, 0);
+let page = await startPage(runtime, 0);
+const pagePort = page.address().port;
 const pageURL = `http://127.0.0.1:${page.address().port}/`;
-const wrapper = http.createServer((req, res) => {
+const wrapper = http.createServer(async (req, res) => {
+  if (req.method === 'POST' && req.url === '/restart') {
+    page.closeAllConnections(); await new Promise(resolve => page.close(resolve));
+    page = await startPage(await createRuntime(directory), pagePort);
+    res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}');
+  }
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
   res.end(`<!doctype html><title>dao settings sandbox</title><iframe title="dao" sandbox="allow-scripts" src="${pageURL}" style="width:100%;height:95vh;border:0"></iframe>`);
 });

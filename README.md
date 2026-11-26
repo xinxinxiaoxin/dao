@@ -31,6 +31,8 @@ The default shared concurrency limit is **5**, across conversations, models, and
 
 The native **Fetch models** button reads QianDao's current `/v1/models` list using the saved API key. dao supplies candidates; your selections stay in Magpie's provider editor. Magpie may also request the list when signing in or starting its plugin host. dao does not poll for models. The provider ID remains `qiandao-gateway`.
 
+Explicit model selections remain exact when the candidate list grows. Selecting only Astra and saving keeps only Astra selected when the editor reopens. New candidates remain available for selection. **Select none** is also preserved.
+
 You can still add models by hand in the settings page or provider editor. Refresh the list to load their Fast capabilities. Manually added names remain available even when absent from the upstream list. Clear the optional settings field if you want candidates to follow only the upstream list. Removing a settings model takes effect on the next refresh, unless it remains explicitly configured elsewhere. Existing saved settings are preserved during updates.
 
 ## Balance and availability
@@ -69,6 +71,8 @@ The plugin configures header forwarding and disables additional patience waiting
 
 The settings page uses loopback port **38418**. It serves configuration only; model traffic goes directly from the provider plugin to QianDao. If the port is occupied, chat remains available with the saved settings; change `settingsPort` in the plugin options to restore the page. Unlike routine URL and concurrency edits, changing that plugin option reloads Magpie's shared plugin host.
 
+The page's local access token is stored in the plugin data directory and remains valid across host restarts. An open page can therefore save edited URLs and concurrency after a restart. When upgrading from a release that used temporary page tokens, reload the page once before editing.
+
 ## Development
 
 Use Node.js 24 or later:
@@ -82,7 +86,7 @@ npm pack
 Pass a release archive as the final argument to test its contents:
 
 ```sh
-node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.4.tgz
+node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.5.tgz
 ```
 
 For comparison with the original gateway:
@@ -94,7 +98,7 @@ npm run test:parity
 
 You can also pass the original gateway file to `node tests/parity.mjs /path/to/gateway.mjs`.
 
-Validation covers 25 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4823 host. Host checks include native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. Browser checks exercise the settings page inside Magpie's `allow-scripts` iframe: clicking Save writes the URL and concurrency, invalid values remain unsaved, Enter saves, and the provider successfully uses the saved URL.
+Validation covers 27 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4827 host. Host checks include native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. Browser checks exercise the settings page inside Magpie's `allow-scripts` iframe: clicking Save writes the URL and concurrency, invalid values remain unsaved, Enter saves, and the provider successfully uses the saved URL.
 
 For the browser regression, `node tests/settings-browser-fixture.mjs` serves the actual settings page in an `allow-scripts` iframe and writes its test URL and settings path to `.sandbox/settings-browser-session.json`. Open that URL with the Ego browser SDK and run the exported `checkSettingsSave(page, { settings, baseURL: "https://example.invalid" })` from `tests/settings-browser.mjs`. It checks the persisted file as well as the visible success message. Stop the fixture with Ctrl+C when finished.
 
