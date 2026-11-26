@@ -72,7 +72,7 @@ try {
   await json(path.join(fixture, 'package.json'), manifest);
   await json(path.join(config, 'settings.json'), { sessionReads: { asked: true, all: false, agents: {} } });
   await json(path.join(config, 'providers.json'), { providers: [{ id: 'qiandao-gateway', models: ['gpt-6-astra', 'future-model'] }] });
-  await json(path.join(config, 'qiandao-gateway/settings.json'), { baseURL: `http://127.0.0.1:${upstreamPort}/v1`, maxConcurrency: 2, models: ['gpt-6-astra'] });
+  await json(path.join(config, 'qiandao-gateway/settings.json'), { baseURL: `http://127.0.0.1:${upstreamPort}/v1`, maxConcurrency: 2, models: ['gpt-6-astra', 'removable-model'] });
   const catalogDir = path.join(env.XDG_CACHE_HOME, 'magpie'); await mkdir(catalogDir, { recursive: true });
   await json(path.join(catalogDir, 'models.json'), { openai: { id: 'openai', models: { 'gpt-6-astra': { id: 'gpt-6-astra', reasoning: true, reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high', 'xhigh', 'max'] }] } } } });
   await cli('plugin', 'add', fixture);
@@ -97,6 +97,10 @@ try {
   listed = JSON.parse(await cli('plugin', '--json'));
   const models = listed.providers.find(x => x.id === 'qiandao-gateway').models;
   for (const id of ['gpt-6-astra', 'future-model']) assert.ok(models.find(x => x.id === id)?.serviceTiers?.includes('priority'), JSON.stringify(models));
+  const codexModels = await (await fetch(`http://${addr}/v1/codex/models?client_version=0.171.0`)).json();
+  const codexModel = codexModels.models.find(x => x.slug === 'qiandao-gateway/gpt-6-astra');
+  assert.ok(codexModel?.supported_reasoning_levels?.some(x => x.effort === 'high'));
+  assert.ok(models.some(x => x.id === 'removable-model'));
   const post = (body = {}, signal = AbortSignal.timeout(20000)) => fetch(`http://${addr}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'codex_cli_rs/fixture', originator: 'codex_cli_rs', 'session-id': 'fixture-session', 'thread-id': 'fixture-thread' }, body: JSON.stringify({ model: 'qiandao-gateway/gpt-6-astra', input: 'fixture', stream: false, ...body }), signal });
   for (const model of ['gpt-6-astra', 'future-model']) {
     const before = captures.length;
@@ -137,7 +141,11 @@ try {
     assert.equal(res.status, 200, await res.text());
   };
   const pidBefore = (await (await fetch(`${page}/_health`)).json()).pid;
-  await save({ baseURL: `http://127.0.0.1:${upstreamPort}/changed/v1`, maxConcurrency: 1 });
+  await save({ baseURL: `http://127.0.0.1:${upstreamPort}/changed/v1`, maxConcurrency: 1, models: ['gpt-6-astra'] });
+  const refreshed = await webAPI('provider/models', { id: 'qiandao-gateway' });
+  assert.ok(!JSON.stringify(refreshed.provider).includes('removable-model'), 'Deleted settings model reappeared after refreshing');
+  assert.ok(JSON.stringify(refreshed.provider).includes('future-model'), 'A manually configured model was removed');
+  console.log('PASS: settings model removal reaches the current host model list, manual models remain');
   await (await post()).text(); assert.equal(captures.at(-1).url, '/changed/v1/responses');
   assert.equal((await (await fetch(`${page}/_health`)).json()).pid, pidBefore);
   mode = 'slow'; peak = 0;

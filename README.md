@@ -31,6 +31,8 @@ The default shared concurrency limit is **5**, across conversations, models, and
 
 Add model names in the settings page or the provider's model editor, then refresh Magpie's model list to load their Fast capabilities. Chat does not depend on a successful remote model-list request. The provider ID remains `qiandao-gateway`.
 
+Removing a model from the settings page takes effect on the next model-list refresh. Models also configured in Magpie's provider editor or explicit plugin configuration remain available until removed there. Explicit model capabilities and provider defaults are preserved.
+
 ## Request handling
 
 The plugin buffers a complete upstream response before delivering it. Temporary failures can be retried without exposing discarded partial output or tool calls to the client.
@@ -57,7 +59,7 @@ Magpie stores the API key. dao stores settings and scheduling metadata under `qi
 
 The plugin configures header forwarding and disables additional patience waiting and rate-limit rests for its own provider. Codex's default timeout and unrelated providers are left unchanged.
 
-The settings page uses loopback port **38418**. It serves configuration only; model traffic goes directly from the provider plugin to QianDao. If the port is occupied, change `settingsPort` in the plugin options. Unlike routine URL and concurrency edits, changing that plugin option reloads Magpie's shared plugin host.
+The settings page uses loopback port **38418**. It serves configuration only; model traffic goes directly from the provider plugin to QianDao. If the port is occupied, chat remains available with the saved settings; change `settingsPort` in the plugin options to restore the page. Unlike routine URL and concurrency edits, changing that plugin option reloads Magpie's shared plugin host.
 
 ## Development
 
@@ -72,7 +74,7 @@ npm pack
 Pass a release archive as the final argument to test its contents:
 
 ```sh
-node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.1.tgz
+node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.2.tgz
 ```
 
 For comparison with the original gateway:
@@ -84,7 +86,7 @@ npm run test:parity
 
 You can also pass the original gateway file to `node tests/parity.mjs /path/to/gateway.mjs`.
 
-Validation covers 12 core tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4823 host. Host checks include API-key sign-in, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. The settings page has also been opened and saved through a real browser.
+Validation covers 16 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4823 host. Host checks include API-key sign-in, manually added models, native Fast controls, request-field preservation, live settings changes, model removal, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. The settings page has also been opened and saved through a real browser.
 
 Host tests use isolated configuration, fake credentials, and a local upstream. They shorten delays and use a three-attempt limit to detect retry multiplication; core tests verify the production defaults.
 
@@ -100,6 +102,7 @@ Host tests use isolated configuration, fake credentials, and a local upstream. T
 
 - [Original QianDao gateway](https://github.com/xinxinxiaoxin/qiandao)
 - [AG Relay for Magpie](https://github.com/xinxinxiaoxin/magpie-agentrouter-relay)
+- [Magpie plugin development guide](https://usemagpie.ai/docs/plugins)
 
 ## License
 
