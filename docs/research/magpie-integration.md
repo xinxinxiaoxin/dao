@@ -38,6 +38,14 @@ AG 参考插件的 loader 写死了 Base URL，不能直接复用这一部分。
 
 模型支持推理时，声明 `reasoning: true` 可沿用宿主模型目录中的档位。默认强度不由插件补写。服务等级需要正确声明 `serviceTiers`，并验证上游实际收到的字段；客户端选择 Priority 不代表上游实际执行了 Priority。见 [plugins.go:429](https://github.com/yetone/magpie/blob/v0.1.4795/internal/provider/plugins.go#L429) 与 [gateway.go:8984](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L8984)。
 
+## Magpie 原生 Fast 开关
+
+千刀的 Fast 操作入口以 Magpie 模型选择器右侧的闪电为首选。`CanFast()` 对 Provider 插件检查模型是否已声明、协议是否为 Chat 或 Responses，以及 `serviceTiers` 是否包含 `priority`，满足后即可返回 true；`m.fast` 属于另一个 Cursor 专用分支，不是千刀所需的能力声明。见 [groupfast.go:66](https://github.com/yetone/magpie/blob/v0.1.4795/internal/provider/groupfast.go#L66)。
+
+界面在选项带有 `fastFor`、`ref` 且不属于运行命令时显示 `fastToggle`。网关在选中 Fast 后调用 `withFast` 处理请求，因此不要求 Codex 自己提供 Fast 按钮或先发送 `service_tier`。见 [app.js:5582](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gui/assets/app.js#L5582) 与 [gateway.go:4499](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L4499)。
+
+宿主支持该入口，插件仍需在真实宿主中验证开关状态、手填模型能力与实际上游请求。用户也接受供应商设置中的 Fast 开关作为入口。
+
 ## 共用并发与配置入口
 
 宿主按 provider ID 和账号分别计数，名额从 Provider 调用前取得，到完整响应读完或取消才释放。插件内部等待和退避也占宿主名额。因此原生并发设置不能直接满足“整个插件共用 5、退避不占上游名额”。见 [gateway.go:4740](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L4740) 与 [gateway.go:4796](https://github.com/yetone/magpie/blob/v0.1.4795/internal/gateway/gateway.go#L4796)。
