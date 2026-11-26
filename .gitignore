@@ -1,2 +1,6 @@
 docs/research/qiandao-source/
 docs/research/magpie-0.1.4795/
+.sandbox/
+.local-tools/
+node_modules/
+*.tgz
