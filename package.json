@@ -1,17 +1,22 @@
 {
-  "name": "magpie-qiandao-gateway",
+  "name": "dao",
   "version": "0.1.0-rc.1",
   "private": true,
   "type": "module",
   "main": "./provider.mjs",
-  "description": "千刀专用 Magpie 插件：可调并发、Fast 与完整响应恢复",
-  "files": ["provider.mjs", "qiandao.middleware.mjs", "lib", "ui", "README.md"],
+  "description": "QianDao gateway for Magpie with shared concurrency, bounded retries and native Fast mode.",
+  "repository": {"type": "git", "url": "git+https://github.com/xinxinxiaoxin/dao.git"},
+  "homepage": "https://github.com/xinxinxiaoxin/dao#readme",
+  "bugs": {"url": "https://github.com/xinxinxiaoxin/dao/issues"},
+  "license": "MIT",
+  "keywords": ["magpie-plugin", "opencode-plugin", "provider", "qiandao", "dao"],
+  "files": ["provider.mjs", "qiandao.middleware.mjs", "lib", "ui", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
   "scripts": {"test": "node --test tests/*.test.mjs", "test:host": "node tests/magpie-host.mjs", "test:parity": "node tests/parity.mjs"},
   "magpie": {
-    "name": "千刀网关",
+    "name": "dao",
     "summary": {"zh": "千刀请求的共享并发、温和重试与 Fast；地址和并发可在插件页面修改。", "en": "QianDao provider with shared concurrency, bounded retries and Priority support."},
     "middleware": "./qiandao.middleware.mjs",
-    "page": {"title": "千刀网关", "file": "ui/launch.html", "service": {"port": 38418, "option": "settingsPort"}},
+    "page": {"title": "dao", "file": "ui/launch.html", "service": {"port": 38418, "option": "settingsPort"}},
     "options": {"settingsPort": 38418}
   }
 }

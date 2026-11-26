@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const magpie = process.argv[2] || path.join(process.env.LOCALAPPDATA, 'Programs/magpie/magpie.exe');
-const bun = await realpath(process.argv[3] || path.join(root, '../ag网关/.local-tools/node_modules/@oven/bun-windows-x64/bin/bun.exe'));
+const bun = await realpath(process.argv[3] || process.env.MAGPIE_BUN || path.join(root, '.local-tools/node_modules/@oven/bun-windows-x64/bin/bun.exe'));
 const parent = path.join(root, '.sandbox');
 await mkdir(parent, { recursive: true });
 const directory = await mkdtemp(path.join(parent, 'host-'));
@@ -124,7 +124,7 @@ try {
   await (await post()).text(); assert.notEqual(captures.at(-1).body.service_tier, 'priority');
   console.log('PASS: native Magpie Fast enabled/disabled without client tier, retries retain Priority');
   const pages = await webAPI('plugin-pages');
-  assert.match(JSON.stringify(pages), /千刀网关/);
+  assert.ok(pages.some(item => item.title === 'dao'));
   const launch = await fetch(new URL(pages[0].url, web), { headers: { cookie } });
   assert.equal(launch.status, 200);
   assert.match(await launch.text(), /location.replace/);

@@ -1,6 +1,6 @@
 # AG 插件的接入经验
 
-来源：[喜鹊ag网关](codex://threads/01a2129f-a7a6-7212-ba64-aa44f7927c8c) 的用户反馈、修复结果，以及当前 AG 工程的真实宿主测试。这些是验收依据，千刀的重试次数和错误分类以千刀需求为准。
+来源：[AG Relay 插件](https://github.com/xinxinxiaoxin/magpie-agentrouter-relay) 的接入经验与真实宿主测试。这些是验收依据，千刀的重试次数和错误分类以千刀需求为准。
 
 ## 配置必须改变实际请求
 

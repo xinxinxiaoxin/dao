@@ -1,60 +1,41 @@
-# 设计资料
+# Design references
 
-## 用户需求
+## Requirements
 
-1. 在 Magpie 中使用千刀专用插件，承接原本由独立千刀网关处理的临时错误。
-2. 以原来 Codex Desktop、CCS 直连配置和千刀网关配合使用的效果为基准，在 Magpie 插件内实现同样的主要职责，避免路由层与插件重复重试。
-3. Base URL 可手动填写和修改。
-4. 整个插件共用一个并发上限，初始为 5，可在界面修改；等待退避和排队不占正在请求的名额。
-5. 工程是独立 Git 仓库。
-6. 内部消化报错是首要目标；采用整段缓存，成功后再向 Codex 交付。
-7. 接受纯插件通过共享请求预算限制实际上游次数，保留宿主对最终错误的等待和账号状态处理边界。
-8. Codex 保持默认等待设置；配置调整限于千刀插件，不为千刀改动 Codex 或 Magpie 的全局配置。
-9. 插件注册独立的“千刀网关”供应商；Fast 在 Magpie 中启用，优先采用模型选择器的原生闪电，也接受供应商设置中的开关。Codex 本身无需提供 Fast 按钮。推理强度保留用户选择。
-10. 以单一 Magpie 插件交付和运行，模型转发、错误恢复、并发和设置集成在插件内。
-11. 明确的上下文超限、鉴权失败等终态保留原意交付；临时错误继续内部消化。
+- Deliver one Magpie plugin with integrated QianDao transport, error recovery, concurrency control, and settings.
+- Preserve the original Codex, CCS direct-connection, and QianDao gateway behavior as closely as the plugin interface permits.
+- Keep the upstream Base URL editable.
+- Share one configurable concurrency limit across models, accounts, and conversations; default to 5.
+- Buffer complete responses to recover temporary failures before delivering content.
+- Share request budgets across repeated Magpie calls, while preserving explicit terminal errors for client recovery.
+- Keep Codex's default waiting behavior and unrelated provider settings unchanged.
+- Offer Fast in Magpie through its native lightning control, without requiring a Codex Fast button.
 
-## 来源
+## Sources
 
-- [旧千刀网关](https://github.com/xinxinxiaoxin/qiandao)，本地参考副本：`qiandao-source/`，不纳入当前仓库。
-- 用户提供的千刀公告截图：推荐 Codex Desktop 加 CCSwitch 直连；反对路由导致切站和缓存损失；提及单窗口、相同并发及 high 推理强度。
-- [喜鹊ag网关](codex://threads/01a2129f-a7a6-7212-ba64-aa44f7927c8c) 的实际接入记录。
-- [旧网关行为](qiandao-behavior.md)：基于提交 `4119d7891fe4af0b978d1a238041e91f072c6b02`。
-- [Magpie 接入边界](magpie-integration.md)：基于当前安装版本 `0.1.4795`。
-- [插件集成边界](architecture-options.md)：单一插件的职责、宿主约束和错误恢复要求。
+- [Original QianDao gateway](https://github.com/xinxinxiaoxin/qiandao), reference commit `4119d7891fe4af0b978d1a238041e91f072c6b02`.
+- [AG Relay plugin](https://github.com/xinxinxiaoxin/magpie-agentrouter-relay), including its host integration tests.
+- [Original gateway behavior](qiandao-behavior.md).
+- [Magpie integration boundaries](magpie-integration.md), based on the inspected 0.1.4795 source.
+- [Plugin integration responsibilities](architecture-options.md).
+- [AG integration lessons](ag-integration-lessons.md).
 
-## 客户端与设置边界
+Local reference checkouts are ignored by Git and are not included in release packages. Supporting design documents retain their original working language.
 
-整段缓存受 Codex 默认等待期限约束。客户端超时或取消后停止对应的排队、退避与上游调用。
+## Architecture decisions
 
-地址和总并发采用官方插件页面服务提供的专用设置页，直接更新当前插件状态，避免通过标准 options 保存重载共享宿主。具体行为见 [设计方案](../design.md)。
+- [Provider-owned retries](../adr/0001-provider-owned-retries.md).
+- [Complete-response delivery](../adr/0002-buffer-before-delivery.md).
+- [Preserving explicit terminal errors](../adr/0003-preserve-terminal-errors.md).
 
-## 已确定的架构
+## Validation
 
-- [在 Magpie 中保留原有网关职责](../adr/0001-provider-owned-retries.md)。
-- [完整响应确认后交付](../adr/0002-buffer-before-delivery.md)。
-- [保留需要客户端处理的明确终态](../adr/0003-preserve-terminal-errors.md)。
+The [design](../design.md) defines request behavior; the [validation record](../validation.md) covers the implemented package.
 
-## 行为基准
+Validation observes actual upstream sends and client-visible responses. It covers sign-in, manually entered models, reasoning effort, Fast, request preservation, hot URL and concurrency changes, overlapping host generations, cancellation, bounded retries, and terminal context-limit events.
 
-旧网关默认最多 7 次尝试（包括首次），300 秒内准入新的尝试；限流退避为 3、6、10、20、40、60 秒，普通错误为 0.75、1.5、3、3、3、3 秒，均尊重更长的 `Retry-After`。同一次客户端请求被 Magpie 再次调用时沿用已有次数和期限。客户端主动重新提交的请求有自己的预算，但仍受插件共用并发和冷却约束。
+Native Fast is checked with requests that do not already contain a service tier. Enabling it must send `priority`; disabling it must stop forcing Priority; retries retain the original choice.
 
-客户端取消会终止排队、退避与当前上游请求。并发和地址调整的实际生效方式取决于最终设置入口。
+## Limitations
 
-## 接入验收要点
-
-- 让旧网关与新插件对同一模拟上游运行，比较正常响应、429、200 内嵌错误、部分内容后断流、永久错误和客户端取消时的实际发送次数、请求内容与客户端结果。
-- 在实际 Magpie 宿主中验证登录表单，模型 API Key 必须能正确传入聊天请求。
-- 手填模型可以使用，不能把聊天可用性绑定在远程模型列表成功上。
-- 验证客户端收到正文和工具调用结果，而不只确认请求发出。
-- 模型推理档位、上下文和输出能力要检查宿主实际暴露给客户端的数据。
-- Fast 从实际交付的 Magpie 开关验收：客户端请求不带 Fast 字段时，开启后仍发送 `service_tier: "priority"`，关闭后不再强制 Priority，重试保留同一选择；内置模型与手填受支持模型均验证，推理强度保持原选择。
-- Base URL 修改必须改变实际请求目的地，并检查路径拼接。
-- 在本地模拟上游统计真实尝试次数，覆盖 Magpie 和插件叠加后的行为。
-- 上下文超限事件保留原意传到 Codex；不可恢复终态返回后，宿主再次调用不产生新的上游请求。
-- 多个对话、模型和账号同时调用时，实际上游在途请求合计不超过配置值；参数修改期间也要满足已约定的生效规则。
-- 验证客户端超时断开后，插件停止对应的排队、退避与上游调用；单纯 HTTP 保活不等同于客户端仍在等待。
-
-## 已知限制
-
-千刀公告对“直连”的要求是否接受 Magpie 中的专用插件，无法仅从截图判断。技术设计可以减少请求差异和重试强度，但不代表千刀已认可该用法。
+Complete-response buffering remains subject to the client's default idle timeout. Upstream routing, cache hits, granted service tiers, and live-account acceptance cannot be established by local fixtures alone.

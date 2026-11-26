@@ -1,72 +1,106 @@
-# 千刀网关插件
+# dao
 
-把原来 Codex Desktop、CCS 直连配置和千刀网关配合使用的效果迁入 Magpie 插件。Codex 通过 Magpie 调用千刀插件，插件承担原网关的报错消化和并发管理，用户无需再依赖 CCS 或单独启动网关。
+A QianDao gateway built into Magpie. Shared concurrency, bounded retries, and Fast mode run inside one plugin, with an editable upstream URL and a settings page.
 
-以一个 Magpie 插件安装、运行和管理，模型请求由插件直接发送到千刀。
+## Install
 
-## 安装与使用
-
-本地安装一次：
-
-```powershell
-magpie plugin add "E:\codex项目\喜鹊插件\千刀网关"
+```sh
+magpie plugin add github:xinxinxiaoxin/dao
 ```
 
-也可以解压发布包后，把解压出的插件目录交给 `magpie plugin add`。安装后，日常只使用 Magpie。
+You can also find **dao** under **Plugins → Discover → Unofficial plugins · GitHub** after the catalog refreshes. Updates are installed from **Plugins → Installed → dao**.
 
-1. 打开 Magpie 的“千刀网关”页面，填写千刀 Base URL、模型名和总并发并保存。只填域名时自动使用 `/v1`；已有路径前缀则按填写值使用。
-2. 在供应商中找到“千刀网关”，选择“千刀 API Key”填写模型 Key。
-3. 在 Codex 的 Magpie 模型选择器中选择 `qiandao-gateway/模型名`。Fast 使用右侧闪电开关，不需要 Codex 提供 Fast 按钮。
-4. 添加模型后，刷新 Magpie 模型列表，读取该模型的 Fast 能力。模型名也可在供应商原有输入框中手填。
+To install a local checkout or an extracted release archive:
 
-API Key 由 Magpie 保存。设置页用于地址、模型和总并发，保存后立即作用于新请求。修改并发不会重启宿主；调低时保留已有请求，后续请求等待到名额足够。默认总并发为 5。
+```sh
+magpie plugin add /path/to/dao
+```
 
-## 请求处理
+Keep Magpie's Middleware feature enabled. Magpie manages the plugin runtime.
 
-- 插件注册独立的“千刀网关”供应商，选择该供应商下的模型时使用网关策略。
-- Base URL 由使用者填写和修改，支持千刀更换域名。
-- 整个插件共用一个并发上限，初始为 5，可在插件界面调整。
-- 以原有直连配置加千刀网关的使用效果为行为基准，尽量保留请求内容、模型选择、推理强度及会话和缓存相关字段。
-- 首要目标是由插件内部消化可恢复错误，避免中间失败直接打断 Codex，并避免与 Magpie 的默认重试叠加。
-- 沿用旧网关的整段缓存：成功后再交付 Codex，交付前的可恢复断流在插件内部处理。
-- 采用纯 Provider 插件与请求中间件，同一客户端请求跨宿主调用共用重试预算。
-- 旧网关的错误分类、重试次数与等待节奏作为基准，差异必须有具体的兼容需求并记录。
-- 明确的上下文超限、鉴权失败等终态保留原意交付；临时限流、繁忙及可恢复断流在插件内处理。
-- Codex 保持默认等待设置；千刀插件的接入和参数修改限于本插件，不修改 Codex 或 Magpie 的全局配置。
-- 使用 Magpie 原生闪电开关启用千刀 Fast。开启后请求使用 Priority 服务等级，重试保留该选择；明确拒绝 Fast 时不会自动改成普通模式重新发送。
+## Set up
 
-每次客户端请求最多发送 7 次，含首次。限流等待依次为 3、6、10、20、40、60 秒；普通临时错误等待为 0.75、1.5、3、3、3、3 秒；有效 `Retry-After` 更长时按上游要求等待。300 秒内准入新尝试，已经开始的上游请求最长等待 900 秒，客户端取消会提前终止。
+1. Open the **dao** page in Magpie. Enter your QianDao Base URL, model names, and concurrency limit, then save.
+2. Open the **dao** provider and sign in with **dao API Key**.
+3. Select a model such as `qiandao-gateway/gpt-6-astra` through Magpie.
+4. Enable Fast with the model picker's lightning button. Codex does not need its own Fast control.
 
-插件为自己的供应商设置必要的客户端请求头透传、关闭额外 patience 等待及限流休息。并发计数与冷却状态保存在 Magpie 数据目录的 `qiandao-gateway/` 中，使宿主重载期间也共享上限；文件不保存聊天正文或 Key。设置页的历史只保留当前宿主最近 20 条请求结果。
+A bare origin receives the `/v1` suffix automatically. An explicit path prefix is preserved. The address is editable; new requests use the saved address while requests already in progress keep their original destination.
 
-## 验证与开发
+The default shared concurrency limit is **5**, across conversations, models, and accounts. Saving a new limit takes effect without restarting the plugin host. Lowering the limit lets existing requests finish and queues new ones until capacity is available.
 
-Node.js 24：
+Add model names in the settings page or the provider's model editor, then refresh Magpie's model list to load their Fast capabilities. Chat does not depend on a successful remote model-list request. The provider ID remains `qiandao-gateway`.
 
-```powershell
+## Request handling
+
+The plugin buffers a complete upstream response before delivering it. Temporary failures can be retried without exposing discarded partial output or tool calls to the client.
+
+| Policy | Default |
+| --- | --- |
+| Maximum upstream attempts | 7, including the first request |
+| Rate-limit retry delays | 3, 6, 10, 20, 40, 60 seconds |
+| Other transient-error delays | 0.75, 1.5, 3, 3, 3, 3 seconds |
+| Admission window for new attempts | 300 seconds |
+| Timeout for an attempt already in progress | 900 seconds |
+
+A longer valid `Retry-After` takes precedence. Concurrency and cooldown state are shared, including during overlapping plugin-host generations. Queueing and backoff do not occupy an upstream execution slot. Client cancellation stops queued work, backoff, and the active upstream request.
+
+Magpie calls belonging to the same client request share one attempt budget and final result. Repeated host calls do not start a fresh round of upstream retries. Calls without a middleware request marker make at most one upstream attempt.
+
+Explicit terminal errors retain their meaning. A `response.failed` event with `context_length_exceeded` reaches the client so Codex can compact its context; authentication failures are not retried as temporary outages.
+
+The plugin preserves the selected model, reasoning effort, cache-related fields, client identity headers, and the request's service tier. Enabling Fast in Magpie sends `service_tier: "priority"`, even when Codex supplies no tier. Retries keep that choice. An explicit rejection of Fast is not silently retried as Standard.
+
+## Settings and storage
+
+Magpie stores the API key. dao stores settings and scheduling metadata under `qiandao-gateway/` in Magpie's data directory. These files contain neither conversation bodies nor API keys. The settings page shows active requests, queued requests, cooldown, and the current host's latest 20 results.
+
+The plugin configures header forwarding and disables additional patience waiting and rate-limit rests for its own provider. Codex's default timeout and unrelated providers are left unchanged.
+
+The settings page uses loopback port **38418**. It serves configuration only; model traffic goes directly from the provider plugin to QianDao. If the port is occupied, change `settingsPort` in the plugin options. Unlike routine URL and concurrency edits, changing that plugin option reloads Magpie's shared plugin host.
+
+## Development
+
+Use Node.js 24 or later:
+
+```sh
 npm test
-npm run test:parity
-node tests/magpie-host.mjs <magpie.exe路径> <bun.exe路径>
+node tests/magpie-host.mjs /path/to/magpie /path/to/bun
 npm pack
 ```
 
-`test:parity` 默认读取 `docs/research/qiandao-source/gateway.mjs`，也可用 `node tests/parity.mjs <旧网关文件>` 指定。宿主测试使用独立 Magpie 配置、假 Key 和本机模拟上游；不会调用真实千刀。可在宿主测试命令后追加 `.tgz` 路径验证发布包。持续限流测试缩短等待、使用 3 次上限，以检查宿主是否叠加发送；单元测试检查默认 7 次与正式间隔。
+Pass a release archive as the final argument to test its contents:
 
-已在 Magpie 0.1.4823 验证：Key 登录、内置及手填模型、原生 Fast、客户端字段保留、共享并发、地址热改、宿主重载、上下文超限、持续 429 和取消。设置页已通过真实浏览器打开和保存验证。
+```sh
+node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.1.tgz
+```
 
-工程的[设计方案](docs/design.md)与[源码依据](docs/research/README.md)随仓库维护。
+For comparison with the original gateway:
 
-## 已知限制
+```sh
+git clone https://github.com/xinxinxiaoxin/qiandao.git docs/research/qiandao-source
+npm run test:parity
+```
 
-整段缓存期间不逐字显示回答，长时间没有内容可能触发客户端超时。Magpie 对 Provider 插件的最终错误仍可能等待或标记账号暂歇；插件负责限制实际发往千刀的请求量。实际缓存命中和千刀是否认可该接入方式由上游决定。
+You can also pass the original gateway file to `node tests/parity.mjs /path/to/gateway.mjs`.
 
-Codex 自动重连或手动重新发送形成新请求，拥有自己的次数预算，但继续受共用并发与冷却约束。未经过请求中间件的宿主内部调用最多发送一次，避免无法关联时扩大重试。保持 Magpie 的 Middleware 功能开启。
+Validation covers 12 core tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4823 host. Host checks include API-key sign-in, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. The settings page has also been opened and saved through a real browser.
 
-设置页默认使用本机端口 38418，仅用于设置，不承载模型转发。如果被其他程序占用，可在插件选项中修改 `settingsPort`，这项修改会按 Magpie 行为重载插件宿主。共享宿主重载时，旧宿主最多等待十分钟收尾，超长请求可能被宿主终止。
+Host tests use isolated configuration, fake credentials, and a local upstream. They shorten delays and use a three-attempt limit to detect retry multiplication; core tests verify the production defaults.
 
-尚未使用真实千刀账号完成线上验收。测试确认请求携带 Priority，不能替上游保证实际兑现的服务等级。
+## Limitations
 
-## 参考
+- Complete-response buffering delays visible output. A long response can hit the client's default idle timeout before the gateway's own budget ends.
+- A client reconnect or a manually resent request receives a new budget, while still sharing the global plugin concurrency limit and cooldown.
+- Magpie may still process a plugin's final error. dao bounds actual upstream sends; it cannot disable every host error-handling behavior.
+- During a shared-host reload, Magpie allows the retiring host up to ten minutes to finish. Longer requests may be interrupted by the host.
+- Live QianDao account acceptance has not been tested. Requesting Priority does not guarantee the upstream grants that service tier or a cache hit.
 
-- [千刀旧网关](https://github.com/xinxinxiaoxin/qiandao)
-- [AG 插件讨论](codex://threads/01a2129f-a7a6-7212-ba64-aa44f7927c8c)
+## Related projects
+
+- [Original QianDao gateway](https://github.com/xinxinxiaoxin/qiandao)
+- [AG Relay for Magpie](https://github.com/xinxinxiaoxin/magpie-agentrouter-relay)
+
+## License
+
+[MIT](LICENSE). See [attribution](THIRD_PARTY_NOTICES.md) for related project credits.
