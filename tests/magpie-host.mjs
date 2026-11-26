@@ -24,6 +24,7 @@ const metadataCalls = [];
 let remoteModels = ['gpt-6-astra', 'remote-old'], metadataClosed = false;
 let mode = 'pass', recover = 0, disconnected = false, active = 0, peak = 0;
 let emptyTurnSent = false;
+let longRetrySent = false;
 const holds = [];
 function responseItems(res, output, id = 'resp_loop') {
   const response = { id, object: 'response', status: 'completed', model: 'gpt-6-astra', output, usage: { input_tokens: 40, output_tokens: 34, total_tokens: 74 } };
@@ -59,7 +60,7 @@ const upstream = http.createServer(async (req, res) => {
   const raw = Buffer.concat(chunks).toString();
   assert.ok(!raw.includes('_qiandao_request'), 'Internal marker leaked');
   const body = JSON.parse(raw || '{}');
-  captures.push({ body, url: req.url, headers: req.headers });
+  captures.push({ body, url: req.url, headers: req.headers, at: Date.now() });
   active++; peak = Math.max(peak, active); res.once('close', () => { active--; });
   if (mode === 'codex-loop') {
     const inputs = Array.isArray(body.input) ? body.input : [];
@@ -81,6 +82,11 @@ const upstream = http.createServer(async (req, res) => {
     return responseItems(res, [{ type: 'message', id: 'msg_progress', role: 'assistant', phase: 'commentary', status: 'completed', content: [{ type: 'output_text', text: 'I will run two calculations.', annotations: [], logprobs: [] }] }, { type: 'custom_tool_call', id: 'ctc_first', call_id: 'call_dao_first', name: 'exec', input: 'text(17 * 19)', status: 'completed' }], 'resp_first');
   }
   if (mode === 'hang') { res.once('close', () => { disconnected = true; }); return; }
+  if (mode === 'long-retry' && !longRetrySent) {
+    longRetrySent = true;
+    res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '120' });
+    return res.end(JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'Too many requests' } }));
+  }
   if (mode === 'hold') { holds.push(() => reply(res, body, body.model)); return; }
   if (mode === 'rate' || (mode === 'recover' && ++recover <= 2)) {
     res.writeHead(429, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'Too many requests' } }));
@@ -127,7 +133,7 @@ try {
   installed.plugins[0].options = { settingsPort: pagePort };
   await json(path.join(config, 'plugins.json'), installed);
   // Exercise the same relay with shorter waits in the isolated host.
-  await writeFile(path.join(fixture, 'provider.mjs'), "import { createProvider } from './lib/provider.mjs'; export default createProvider({policy:{maxAttempts:3,budgetMs:3000,rateDelays:[20],errorDelays:[20]}});\n");
+  await writeFile(path.join(fixture, 'provider.mjs'), `import { createProvider } from './lib/provider.mjs'; export default createProvider({policy:{maxAttempts:3,budgetMs:${process.env.QIANDAO_RETRY_AFTER === '1' ? 90000 : 3000},rateDelays:[20],errorDelays:[20]}});\n`);
   gateway = spawn(magpie, ['serve', `--web=127.0.0.1:${webPort}`], { cwd: directory, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   ended = once(gateway, 'close');
   for (const stream of [gateway.stdout, gateway.stderr]) stream.on('data', chunk => { log = (log + chunk).slice(-6000); });
@@ -313,6 +319,17 @@ try {
   assert.equal(captures.length - beforeNextTier, 1);
   assert.equal(captures.at(-1).body.service_tier, 'priority', 'A previous refusal must not silently downgrade a new Fast request');
   console.log('PASS: explicit Fast refusal is not retried as Standard');
+  if (process.env.QIANDAO_RETRY_AFTER === '1') {
+    mode = 'long-retry'; const beforeLong = captures.length;
+    const recovered = await post({}, AbortSignal.timeout(80000));
+    assert.equal(recovered.status, 200, await recovered.text());
+    const attempts = captures.slice(beforeLong);
+    assert.equal(attempts.length, 2);
+    const wait = attempts[1].at - attempts[0].at;
+    assert.ok(wait >= 30000 && wait < 60000, `Expected the first retry after 30 seconds, observed ${wait}ms`);
+    assert.deepEqual(attempts[0].body, attempts[1].body);
+    console.log(`PASS: real host waited ${wait}ms for the first Retry-After: 120, then recovered without changing the request`);
+  }
   if (process.env.QIANDAO_UI_MODE === '1') {
     mode = 'pass';
     remoteModels = ['gpt-6-astra', 'gpt-6.1-sol', 'codex-auto-review', 'gpt-5.3-codex-spark'];

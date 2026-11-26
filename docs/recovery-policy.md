@@ -14,7 +14,7 @@ A completed Responses result must contain something the client can use: an answe
 | --- | --- |
 | HTTP 429 or recognized rate/concurrency-limit error | Up to 7 total attempts, including the first; waits of 3, 6, 10, 20, 40 and 60 seconds |
 | Retryable 408, 425, 500, 502, 503, 504, 522 or 524; connection failure; incomplete stream; empty response; closed-site HTML; completed output without a deliverable | Same 7-attempt budget; waits of 0.75, 1.5, 3, 3, 3 and 3 seconds |
-| First valid `Retry-After` over 30 seconds within a request | Schedule one retry after 30 seconds, if another attempt remains |
+| First valid `Retry-After` over 30 seconds within a request | Schedule one retry after 30 seconds, if another attempt and sufficient admission time remain |
 | Subsequent `Retry-After`, or values at most 30 seconds | Use the greater of the current upstream delay and the original backoff; do not repeat the 30-second exception |
 | Clear authentication, permission, model, parameter, balance/quota or context-length refusal | Return the terminal error without repeating the same request |
 | Explicit rejection of Priority | Preserve the error; never silently retry as Standard |

@@ -20,7 +20,8 @@ function fixture(t, replies, policy = {}) {
   const relay = new Relay(scheduler, { policy, fetchUpstream: async req => {
     sentAt.push(Date.now() - now);
     requests.push(await req.text());
-    const reply = replies[Math.min(index++, replies.length - 1)];
+    let reply = replies[Math.min(index++, replies.length - 1)];
+    if (reply && typeof reply === 'object') { t.mock.timers.setTime(Date.now() + reply.elapsed); reply = reply.after; }
     if (reply === 'ok') return Response.json({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'OK' }] }] });
     return Response.json({ error: { code: 'rate_limit_exceeded' } }, { status: 429, headers: reply === null ? {} : { 'retry-after': reply } });
   } });
@@ -87,3 +88,12 @@ test('a later long Retry-After cannot renew the early retry after a missing head
   assert.equal((await relay.send(request(), { id: 'gap', attempt: 1 })).status, 200);
   assert.deepEqual(waits, [30000, 6000, 90000]);
 });
+
+for (const elapsed of [280000, 310000]) {
+  test(`a ${elapsed / 1000}-second attempt keeps the full cooldown when no 30-second retry fits`, async t => {
+    const { relay, request, waits, requests } = fixture(t, [{ after: '120', elapsed }]);
+    assert.equal((await relay.send(request(), { id: 'deadline', attempt: 1 })).status, 429);
+    assert.equal(requests.length, 1);
+    assert.deepEqual(waits, [120000]);
+  });
+}
