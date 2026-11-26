@@ -14,6 +14,7 @@ const magpie = process.argv[2] || path.join(process.env.LOCALAPPDATA, 'Programs/
 const bun = await realpath(process.argv[3] || process.env.MAGPIE_BUN || path.join(root, '.local-tools/node_modules/@oven/bun-windows-x64/bin/bun.exe'));
 const parent = path.join(root, '.sandbox');
 await mkdir(parent, { recursive: true });
+if (process.env.QIANDAO_UI_MODE === '1') await rm(path.join(parent, 'ui-done'), { force: true });
 const directory = await mkdtemp(path.join(parent, 'host-'));
 const home = path.join(directory, 'home');
 const config = path.join(directory, 'config/magpie');
@@ -242,11 +243,19 @@ try {
   console.log('PASS: explicit Fast refusal is not retried as Standard');
   if (process.env.QIANDAO_UI_MODE === '1') {
     mode = 'pass';
-    await writeFile(path.join(parent, 'ui-session.json'), JSON.stringify({ web, key: env.MAGPIE_WEB_KEY, page, pages, directory }));
+    await json(path.join(config, 'qiandao-gateway/settings.json'), { baseURL: '', maxConcurrency: 5, models: ['gpt-6-astra'] });
+    await writeFile(path.join(parent, 'ui-session.json'), JSON.stringify({ web, key: env.MAGPIE_WEB_KEY, page, pages, directory, settings: path.join(config, 'qiandao-gateway/settings.json'), upstreamURL: `http://127.0.0.1:${upstreamPort}` }));
     console.log('UI READY: isolated Magpie settings are available for browser validation');
     while (true) {
       try { await readFile(path.join(parent, 'ui-done')); break; } catch { await delay(500); }
     }
+    const uiSaved = JSON.parse(await readFile(path.join(config, 'qiandao-gateway/settings.json'), 'utf8'));
+    assert.equal(uiSaved.baseURL, `http://127.0.0.1:${upstreamPort}/v1`);
+    assert.equal(uiSaved.maxConcurrency, 3);
+    const uiResponse = await post(); const uiBody = await uiResponse.text();
+    assert.equal(uiResponse.status, 200, uiBody);
+    assert.equal(captures.at(-1).url, '/v1/responses');
+    console.log('PASS: browser-saved settings persist and the provider sends to that upstream successfully');
   }
   await writeFile(path.join(parent, 'last-host-result.json'), JSON.stringify({ version: manifest.version, passed: true, at: new Date().toISOString() }));
 } catch (error) {

@@ -82,7 +82,7 @@ npm pack
 Pass a release archive as the final argument to test its contents:
 
 ```sh
-node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.3.tgz
+node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.4.tgz
 ```
 
 For comparison with the original gateway:
@@ -94,7 +94,11 @@ npm run test:parity
 
 You can also pass the original gateway file to `node tests/parity.mjs /path/to/gateway.mjs`.
 
-Validation covers 25 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4823 host. Host checks include native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. The settings page has also been opened and saved through a real browser.
+Validation covers 25 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4823 host. Host checks include native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. Browser checks exercise the settings page inside Magpie's `allow-scripts` iframe: clicking Save writes the URL and concurrency, invalid values remain unsaved, Enter saves, and the provider successfully uses the saved URL.
+
+For the browser regression, `node tests/settings-browser-fixture.mjs` serves the actual settings page in an `allow-scripts` iframe and writes its test URL and settings path to `.sandbox/settings-browser-session.json`. Open that URL with the Ego browser SDK and run the exported `checkSettingsSave(page, { settings, baseURL: "https://example.invalid" })` from `tests/settings-browser.mjs`. It checks the persisted file as well as the visible success message. Stop the fixture with Ctrl+C when finished.
+
+Set `QIANDAO_UI_MODE=1` when running the isolated Magpie host test to exercise the complete embedded-page flow. Read `.sandbox/ui-session.json`, open its authenticated test URL, enter the **dao** page, and run `checkSettingsSave` using its `settings` and `upstreamURL` fields. Write `.sandbox/ui-done` after the browser check; the host test then verifies a request reaches that saved upstream.
 
 Host tests use isolated configuration, fake credentials, and a local upstream. They shorten delays and use a three-attempt limit to detect retry multiplication; core tests verify the production defaults.
 

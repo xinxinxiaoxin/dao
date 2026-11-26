@@ -14,6 +14,8 @@ QianDao's public key-usage page and read-only live requests on 2026-11-26 confir
 
 The settings service is optional for transport availability. Failure to bind its port is reported in the plugin log; the provider continues serving requests using persisted settings and retries page startup when the port becomes available.
 
+The settings page remains inside Magpie's `sandbox="allow-scripts"` iframe after navigation to its local service. Save uses a normal button's click handler and individual input validation. It does not submit an HTML form, which the sandbox prohibits. The regression test verifies the file written by an actual browser click and the provider's subsequent request destination.
+
 The shared scheduler and complete-response retry policy are dao behavior, rather than requirements of the plugin contract. The account-level concurrency advertised by `magpie.maxConcurrency` is not used as a substitute for dao's shared upstream limit.
 
 Validation uses isolated configuration and a local upstream. Contract regressions cover preservation of user defaults and model metadata, removal from the live model list, and provider availability when the settings port is occupied.
