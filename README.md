@@ -57,7 +57,7 @@ Completed Responses with no answer, refusal, or usable output are recovered insi
 | Admission window for new attempts | 300 seconds |
 | Timeout for an attempt already in progress | 900 seconds |
 
-A longer valid `Retry-After` takes precedence. Concurrency and cooldown state are shared, including during overlapping plugin-host generations. Queueing and backoff do not occupy an upstream execution slot. Client cancellation stops queued work, backoff, and the active upstream request.
+For each request, the first valid `Retry-After` over 30 seconds schedules one retry after 30 seconds, provided another attempt remains. Later responses use the greater of the upstream's current `Retry-After` and the original backoff; the 30-second exception is not repeated. Values of 30 seconds or less retain the original behavior. Concurrency and cooldown state are shared, including during overlapping plugin-host generations: a 30-second retry never shortens a longer cooldown already set by another request. Queueing and backoff do not occupy an upstream execution slot. Client cancellation stops queued work, backoff, and the active upstream request.
 
 Magpie calls belonging to the same client request share one attempt budget and final result. Repeated host calls do not start a fresh round of upstream retries. Calls without a middleware request marker make at most one upstream attempt.
 
@@ -88,7 +88,7 @@ npm pack
 Pass a release archive as the final argument to test its contents:
 
 ```sh
-node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.6.tgz
+node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.7.tgz
 ```
 
 For comparison with the original gateway:
@@ -100,7 +100,7 @@ npm run test:parity
 
 You can also pass the original gateway file to `node tests/parity.mjs /path/to/gateway.mjs`.
 
-Validation covers 32 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4827 host. Host checks include native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. Browser checks exercise the settings page inside Magpie's `allow-scripts` iframe: clicking Save writes the URL and concurrency, invalid values remain unsaved, Enter saves, and the provider successfully uses the saved URL.
+Validation covers 40 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4827 host. Host checks include native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. Browser checks exercise the settings page inside Magpie's `allow-scripts` iframe: clicking Save writes the URL and concurrency, invalid values remain unsaved, Enter saves, and the provider successfully uses the saved URL.
 
 For the browser regression, `node tests/settings-browser-fixture.mjs` serves the actual settings page in an `allow-scripts` iframe and writes its test URL and settings path to `.sandbox/settings-browser-session.json`. Open that URL with the Ego browser SDK and run the exported `checkSettingsSave(page, { settings, baseURL: "https://example.invalid" })` from `tests/settings-browser.mjs`. It checks the persisted file as well as the visible success message. Stop the fixture with Ctrl+C when finished.
 

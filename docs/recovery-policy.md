@@ -14,12 +14,21 @@ A completed Responses result must contain something the client can use: an answe
 | --- | --- |
 | HTTP 429 or recognized rate/concurrency-limit error | Up to 7 total attempts, including the first; waits of 3, 6, 10, 20, 40 and 60 seconds |
 | Retryable 408, 425, 500, 502, 503, 504, 522 or 524; connection failure; incomplete stream; empty response; closed-site HTML; completed output without a deliverable | Same 7-attempt budget; waits of 0.75, 1.5, 3, 3, 3 and 3 seconds |
-| Valid `Retry-After` longer than the normal delay | Wait at least the upstream's requested duration |
+| First valid `Retry-After` over 30 seconds within a request | Schedule one retry after 30 seconds, if another attempt remains |
+| Subsequent `Retry-After`, or values at most 30 seconds | Use the greater of the current upstream delay and the original backoff; do not repeat the 30-second exception |
 | Clear authentication, permission, model, parameter, balance/quota or context-length refusal | Return the terminal error without repeating the same request |
 | Explicit rejection of Priority | Preserve the error; never silently retry as Standard |
 | Client cancellation or disconnection | Stop its queue, backoff and active upstream request |
 
 New attempts may start only within 300 seconds of the request entering dao. An already-started upstream attempt has a 900-second timeout. Queueing and waiting consume the admission window. Thus 300 seconds is not an unconditional total response timeout. The rate-limit delays total 139 seconds, before queueing and execution time. Concurrency and cooldown are shared across models, accounts and overlapping plugin hosts; queueing and backoff do not occupy execution slots. The default concurrency is 5 and the user may change it live.
+
+The 30-second exception applies once to the first long `Retry-After`, even if that header first appears after earlier attempts. For example, `Retry-After: 120` waits 30 seconds once; if the next response says `Retry-After: 90`, it waits 90 seconds. Both seconds and HTTP-date headers are supported. A missing header does not reset the exception. Shared cooldowns can delay the retry longer, and neither the attempt cap nor the 300-second admission window is extended.
+
+## Original gateway baseline
+
+The baseline is [QianDao commit 4119d78](https://github.com/xinxinxiaoxin/qiandao/tree/4119d7891fe4af0b978d1a238041e91f072c6b02), checked against the upstream repository on 2026-11-26. Complete-response buffering, seven attempts, both delay schedules, the 300-second admission window, the 900-second attempt timeout, shared cooldown/concurrency, and unchanged request replay follow that implementation. The one-time 30-second rule is the owner's local policy supplied on 2026-11-26.
+
+dao also preserves the agreed Responses terminal errors and recovers completed responses without deliverable output. Its request markers bound repeated Magpie callbacks, and its shared scheduler covers overlapping plugin hosts. These integration rules supplement the original recovery loop.
 
 Repeated host calls carrying the same middleware marker share the attempt budget and final result. They cannot start another seven attempts. A call without that marker is sent at most once. A client reconnect or manual resend is a new request and has a new budget.
 
