@@ -19,6 +19,8 @@ const home = path.join(directory, 'home');
 const config = path.join(directory, 'config/magpie');
 const fixture = path.join(directory, 'fixture');
 const captures = [];
+const metadataCalls = [];
+let remoteModels = ['gpt-6-astra', 'remote-old'], metadataClosed = false;
 let mode = 'pass', recover = 0, disconnected = false, active = 0, peak = 0;
 const holds = [];
 function reply(res, body, model) {
@@ -32,6 +34,15 @@ function reply(res, body, model) {
   res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(response));
 }
 const upstream = http.createServer(async (req, res) => {
+  if (req.method === 'GET' && /\/(models|usage)$/.test(req.url)) {
+    metadataCalls.push(req.url);
+    assert.equal(req.headers.authorization, 'Bearer fixture-only');
+    if (metadataClosed) { res.writeHead(503, { 'content-type': 'text/html' }); return res.end('<html>Not open</html>'); }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(req.url.endsWith('/models')
+      ? { object: 'list', data: remoteModels.map(id => ({ id, object: 'model' })) }
+      : { mode: 'unrestricted', balance: 12.5, remaining: 12.5, unit: 'USD', usage: { today: { actual_cost: 1.25 } } }));
+  }
   const chunks = []; for await (const chunk of req) chunks.push(chunk);
   const raw = Buffer.concat(chunks).toString();
   assert.ok(!raw.includes('_qiandao_request'), 'Internal marker leaked');
@@ -44,6 +55,7 @@ const upstream = http.createServer(async (req, res) => {
     res.writeHead(429, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'Too many requests' } }));
   }
   if (mode === 'auth') { res.writeHead(401, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { code: 'invalid_api_key', message: 'invalid key' } })); }
+  if (mode === 'closed') { res.writeHead(403, { 'content-type': 'text/html' }); return res.end('<html>Not open</html>'); }
   if (mode === 'tier-rejected') { res.writeHead(400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { code: 'unsupported_parameter', message: 'Unsupported parameter: service_tier' } })); }
   if (mode === 'context') { res.writeHead(200, { 'content-type': 'text/event-stream' }); return res.end('event: response.failed\ndata: '+JSON.stringify({ type: 'response.failed', response: { id: 'resp_failed', status: 'failed', error: { code: 'context_length_exceeded', message: 'fixture context limit' } } })+'\n\n'); }
   if (mode === 'slow') await delay(180);
@@ -101,6 +113,35 @@ try {
   const codexModel = codexModels.models.find(x => x.slug === 'qiandao-gateway/gpt-6-astra');
   assert.ok(codexModel?.supported_reasoning_levels?.some(x => x.effort === 'high'));
   assert.ok(models.some(x => x.id === 'removable-model'));
+  assert.ok(models.some(x => x.id === 'remote-old'), 'Upstream models are missing');
+  const savedProvider = async () => JSON.parse(await readFile(path.join(config, 'providers.json'), 'utf8')).providers.find(x => x.id === 'qiandao-gateway');
+  let picksBefore = (await savedProvider()).models;
+  remoteModels = ['gpt-6-astra', 'remote-new'];
+  let fetched = await webAPI('provider/models', { id: 'qiandao-gateway' });
+  assert.ok(JSON.stringify(fetched.provider).includes('remote-new'), JSON.stringify(fetched));
+  assert.ok(!JSON.stringify(fetched.provider).includes('remote-old'), 'Removed upstream candidate is still listed');
+  assert.deepEqual((await savedProvider()).models, picksBefore, 'Fetching candidates must not select new models');
+  picksBefore = [...picksBefore, 'remote-new'];
+  await webAPI('provider/save', { id: 'qiandao-gateway', models: picksBefore });
+  assert.deepEqual((await savedProvider()).models, picksBefore, 'Native selection did not save');
+  let quota = await cli('quota', 'qiandao-gateway', '--json');
+  assert.ok(quota.includes('$12.50'), quota);
+  metadataClosed = true;
+  fetched = await webAPI('provider/models', { id: 'qiandao-gateway' });
+  assert.ok(JSON.stringify(fetched.provider).includes('remote-new'), 'A closed site erased the last list');
+  assert.deepEqual((await savedProvider()).models, picksBefore, 'A closed site changed selected models');
+  quota = await cli('quota', 'qiandao-gateway', '--json');
+  assert.match(JSON.parse(quota)[0].readError, /暂时不可用/);
+  assert.ok(!quota.includes('$0.00'), quota);
+  listed = JSON.parse(await cli('plugin', '--json'));
+  assert.ok(!JSON.stringify(listed.providers.find(x => x.id === 'qiandao-gateway').accounts).includes('expired'), 'Closure expired the account');
+  metadataClosed = false;
+  remoteModels = ['gpt-6-astra', 'remote-reopened'];
+  fetched = await webAPI('provider/models', { id: 'qiandao-gateway' });
+  assert.ok(JSON.stringify(fetched.provider).includes('remote-reopened'));
+  assert.ok(!JSON.stringify(fetched.provider).includes('remote-new'));
+  assert.deepEqual((await savedProvider()).models, picksBefore.filter(id => id !== 'remote-new'), 'Reopening should remove only the delisted upstream pick');
+  console.log('PASS: native model refresh updates candidates without selecting them; closure keeps models and login, balance is unavailable rather than zero');
   const post = (body = {}, signal = AbortSignal.timeout(20000)) => fetch(`http://${addr}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'codex_cli_rs/fixture', originator: 'codex_cli_rs', 'session-id': 'fixture-session', 'thread-id': 'fixture-thread' }, body: JSON.stringify({ model: 'qiandao-gateway/gpt-6-astra', input: 'fixture', stream: false, ...body }), signal });
   for (const model of ['gpt-6-astra', 'future-model']) {
     const before = captures.length;
@@ -145,6 +186,7 @@ try {
   const refreshed = await webAPI('provider/models', { id: 'qiandao-gateway' });
   assert.ok(!JSON.stringify(refreshed.provider).includes('removable-model'), 'Deleted settings model reappeared after refreshing');
   assert.ok(JSON.stringify(refreshed.provider).includes('future-model'), 'A manually configured model was removed');
+  assert.ok(metadataCalls.includes('/changed/v1/models'), 'Model refresh ignored the new Base URL');
   console.log('PASS: settings model removal reaches the current host model list, manual models remain');
   await (await post()).text(); assert.equal(captures.at(-1).url, '/changed/v1/responses');
   assert.equal((await (await fetch(`${page}/_health`)).json()).pid, pidBefore);
@@ -172,6 +214,14 @@ try {
   const exhausted = await post({}, AbortSignal.timeout(80000)); await exhausted.text();
   assert.equal(captures.length - beforeRate, 3, log);
   console.log('PASS: persistent 429 across host attempts, exactly three configured upstream sends');
+  mode = 'closed'; const beforeClosed = captures.length;
+  const closedReply = await post({}, AbortSignal.timeout(80000)); const closedText = await closedReply.text();
+  assert.equal(captures.length - beforeClosed, 3);
+  assert.notEqual(closedReply.status, 200); assert.ok(!closedText.includes('<html>'));
+  listed = JSON.parse(await cli('plugin', '--json'));
+  assert.ok(!JSON.stringify(listed.providers.find(x => x.id === 'qiandao-gateway').accounts).includes('expired'));
+  mode = 'pass'; const openAgain = await post(); assert.equal(openAgain.status, 200, await openAgain.text());
+  console.log('PASS: closed-site HTML has a bounded recovery budget and the account works after reopening');
   mode = 'hang'; const beforeHang = captures.length; const controller = new AbortController();
   const pending = post({}, controller.signal).then(r => r.text()).catch(() => {});
   for (let i = 0; i < 100 && captures.length === beforeHang; i++) await delay(30);

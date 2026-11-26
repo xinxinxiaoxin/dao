@@ -20,18 +20,26 @@ Keep Magpie's Middleware feature enabled. Magpie manages the plugin runtime.
 
 ## Set up
 
-1. Open the **dao** page in Magpie. Enter your QianDao Base URL, model names, and concurrency limit, then save.
+1. Open the **dao** page in Magpie. Enter your QianDao Base URL and concurrency limit, then save. The manual model field is optional.
 2. Open the **dao** provider and sign in with **dao API Key**.
-3. Select a model such as `qiandao-gateway/gpt-6-astra` through Magpie.
+3. In the **dao** provider editor, click **Fetch models** (or **Fetch models again**), select the models you want, and save.
 4. Enable Fast with the model picker's lightning button. Codex does not need its own Fast control.
 
 A bare origin receives the `/v1` suffix automatically. An explicit path prefix is preserved. The address is editable; new requests use the saved address while requests already in progress keep their original destination.
 
 The default shared concurrency limit is **5**, across conversations, models, and accounts. Saving a new limit takes effect without restarting the plugin host. Lowering the limit lets existing requests finish and queues new ones until capacity is available.
 
-Add model names in the settings page or the provider's model editor, then refresh Magpie's model list to load their Fast capabilities. Chat does not depend on a successful remote model-list request. The provider ID remains `qiandao-gateway`.
+The native **Fetch models** button reads QianDao's current `/v1/models` list using the saved API key. dao supplies candidates; your selections stay in Magpie's provider editor. Magpie may also request the list when signing in or starting its plugin host. dao does not poll for models. The provider ID remains `qiandao-gateway`.
 
-Removing a model from the settings page takes effect on the next model-list refresh. Models also configured in Magpie's provider editor or explicit plugin configuration remain available until removed there. Explicit model capabilities and provider defaults are preserved.
+You can still add models by hand in the settings page or provider editor. Refresh the list to load their Fast capabilities. Manually added names remain available even when absent from the upstream list. Clear the optional settings field if you want candidates to follow only the upstream list. Removing a settings model takes effect on the next refresh, unless it remains explicitly configured elsewhere. Existing saved settings are preserved during updates.
+
+## Balance and availability
+
+The provider account's usage information shows QianDao's balance, or its key/subscription allowance where applicable. It reads `/v1/usage` with the existing API key; no separate management token is required. The same information is available through `magpie quota qiandao-gateway --json`.
+
+QianDao may close its gateway between availability periods. A failed or empty model-list response preserves the last successful list and existing selections. A failed balance query reports that it is unavailable; Magpie can retain the previous balance beside a read-error notice. That value is historical, not a fresh balance, and an unavailable query is never converted to zero or an expired login.
+
+Model and balance queries each make one request with an eight-second timeout. Chat can still use configured models when these queries are unavailable. HTML closure pages are treated as temporary upstream failures under the normal bounded chat retry policy. After reopening, use **Fetch models again** to get the currently offered models; Magpie manages removal and restoration of previously selected upstream models.
 
 ## Request handling
 
@@ -55,7 +63,7 @@ The plugin preserves the selected model, reasoning effort, cache-related fields,
 
 ## Settings and storage
 
-Magpie stores the API key. dao stores settings and scheduling metadata under `qiandao-gateway/` in Magpie's data directory. These files contain neither conversation bodies nor API keys. The settings page shows active requests, queued requests, cooldown, and the current host's latest 20 results.
+Magpie stores the API key. dao stores settings, scheduling metadata, manually added model IDs, and the last successful model list per account under `qiandao-gateway/` in Magpie's data directory. These files contain neither conversation bodies nor API keys. Model caches are scoped to the configured Base URL. The settings page shows active requests, queued requests, cooldown, and the current host's latest 20 results.
 
 The plugin configures header forwarding and disables additional patience waiting and rate-limit rests for its own provider. Codex's default timeout and unrelated providers are left unchanged.
 
@@ -74,7 +82,7 @@ npm pack
 Pass a release archive as the final argument to test its contents:
 
 ```sh
-node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.2.tgz
+node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.3.tgz
 ```
 
 For comparison with the original gateway:
@@ -86,7 +94,7 @@ npm run test:parity
 
 You can also pass the original gateway file to `node tests/parity.mjs /path/to/gateway.mjs`.
 
-Validation covers 16 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4823 host. Host checks include API-key sign-in, manually added models, native Fast controls, request-field preservation, live settings changes, model removal, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. The settings page has also been opened and saved through a real browser.
+Validation covers 25 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4823 host. Host checks include native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. The settings page has also been opened and saved through a real browser.
 
 Host tests use isolated configuration, fake credentials, and a local upstream. They shorten delays and use a three-attempt limit to detect retry multiplication; core tests verify the production defaults.
 
@@ -96,7 +104,7 @@ Host tests use isolated configuration, fake credentials, and a local upstream. T
 - A client reconnect or a manually resent request receives a new budget, while still sharing the global plugin concurrency limit and cooldown.
 - Magpie may still process a plugin's final error. dao bounds actual upstream sends; it cannot disable every host error-handling behavior.
 - During a shared-host reload, Magpie allows the retiring host up to ten minutes to finish. Longer requests may be interrupted by the host.
-- Live QianDao account acceptance has not been tested. Requesting Priority does not guarantee the upstream grants that service tier or a cache hit.
+- Live QianDao model-list and balance queries have been verified; live chat has not been tested. Requesting Priority does not guarantee the upstream grants that service tier or a cache hit.
 
 ## Related projects
 

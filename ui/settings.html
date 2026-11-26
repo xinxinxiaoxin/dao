@@ -6,10 +6,10 @@
 <header><div><h1>dao</h1><p>连接千刀，让临时错误在当前请求里恢复。</p></div><span class="badge">Magpie 插件</span></header>
 <section><h2>连接与并发</h2><form id="settings">
 <label for="baseURL">千刀 Base URL</label><input id="baseURL" type="url" placeholder="https://api666.zzzcoding.org" required autocomplete="off"><p class="hint">填千刀的服务地址。只填域名时会使用 /v1；保存后用于新请求。</p>
-<div class="row"><div><label for="models">模型名称</label><textarea id="models" spellcheck="false" placeholder="gpt-6-astra"></textarea><p class="hint">每行一个。也可以在供应商里手填模型；新增后刷新模型列表即可读取 Fast 能力。</p></div><div class="narrow"><label for="maxConcurrency">总并发上限</label><input id="maxConcurrency" type="number" min="1" step="1" required><p class="hint">全部对话和账号共用。调低后，已有请求继续，新请求等待。</p></div></div>
+<div class="row"><div><label for="models">手填模型（可选）</label><textarea id="models" spellcheck="false" placeholder="每行一个模型名称，可留空"></textarea><p class="hint">在 dao 供应商里点“获取模型／预下载模型”，刷新千刀当前开放的列表后自行勾选。这里仅补充你要手填的模型；填入的名称会一直保留在候选列表。</p></div><div class="narrow"><label for="maxConcurrency">总并发上限</label><input id="maxConcurrency" type="number" min="1" step="1" required><p class="hint">全部对话和账号共用。调低后，已有请求继续，新请求等待。</p></div></div>
 <div class="actions"><button id="save" type="submit">保存设置</button><span id="notice" role="status"></span></div></form></section>
 <section><h2>当前状态</h2><div class="stats"><div class="stat"><span>正在请求</span><strong id="active">0</strong></div><div class="stat"><span>正在排队</span><strong id="queued">0</strong></div><div class="stat"><span>冷却剩余</span><strong id="cooldown">0 秒</strong></div></div><table id="history" hidden><thead><tr><th>时间</th><th>结果</th><th>尝试</th><th>耗时</th></tr></thead><tbody></tbody></table><p id="empty">还没有完成的请求。</p></section>
-<p class="hint">API Key 在“dao”供应商里填写。Fast 使用模型选择器右侧的闪电开关。回答完整生成后再交付，等待时不会逐字显示。</p>
+<p class="hint">API Key 在“dao”供应商里填写，余额显示在该账号的用量信息中。千刀暂时关闭时，模型列表会保留，余额旁会提示查询失败；之前的余额仅供参考。Fast 使用模型选择器右侧的闪电开关。回答完整生成后再交付，等待时不会逐字显示。</p>
 </main><script>
 const token='__PAGE_TOKEN__';const $=id=>document.getElementById(id);let loaded=false;
 async function api(path,options={}){const response=await fetch(new URL(path,location.href),{...options,headers:{'x-qiandao-page':token,...options.headers}});const data=await response.json();if(!response.ok)throw new Error(data.error||'请求失败');return data}
