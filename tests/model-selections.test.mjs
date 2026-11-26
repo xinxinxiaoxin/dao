@@ -5,6 +5,16 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createProvider } from '../lib/provider.mjs';
 import { createSettings } from '../lib/settings.mjs';
+import { configureProvider } from '../lib/host-settings.mjs';
+
+test('host-normalized headers do not rewrite an unchanged provider file', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'dao-headers-'));
+  t.after(async () => { assert.equal(dirname(await realpath(directory)), await realpath(tmpdir())); await rm(directory, { recursive: true, force: true }); });
+  const file = join(directory, 'providers.json');
+  const raw = JSON.stringify({ providers: [{ id: 'qiandao-gateway', models: ['gpt-6-astra'], passHeaders: ['User-Agent', 'Originator', 'Session-Id', 'Thread-Id', 'X-Codex-Turn-Metadata', 'X-Codex-Turn-State', 'X-Codex-Beta-Features'], limitRestOff: true, patience: -1 }] });
+  await writeFile(file, raw); await configureProvider(directory);
+  assert.equal(await readFile(file, 'utf8'), raw);
+});
 
 test('refresh records candidates without changing explicit picks or other providers', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'dao-picks-'));
@@ -30,6 +40,11 @@ test('refresh records candidates without changing explicit picks or other provid
   assert.deepEqual(stored.providers[0].pickedFrom, ids);
   closed = true; const before = await readFile(file, 'utf8'); await list();
   assert.equal(await readFile(file, 'utf8'), before);
+  stored.providers[0].models = []; stored.providers[0].delisted = ['gpt-6-astra'];
+  await writeFile(file, JSON.stringify(stored)); closed = false; ids.push('reopened-model'); await list();
+  stored = JSON.parse(await readFile(file, 'utf8'));
+  assert.deepEqual(stored.providers[0].pickedFrom, ids);
+  assert.deepEqual(stored.providers[0].delisted, ['gpt-6-astra']);
   stored.providers[0].models = []; stored.providers[0].noModels = true;
   await writeFile(file, JSON.stringify(stored)); closed = false; await list();
   assert.equal(JSON.parse(await readFile(file, 'utf8')).providers[0].noModels, true);

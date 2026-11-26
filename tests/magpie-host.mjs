@@ -132,6 +132,16 @@ try {
     assert.deepEqual(none.models.filter(x => x.on), [], 'Select none must leave every candidate unselected');
     await webAPI('provider/save', { id: 'qiandao-gateway', models: picksBefore });
     console.log('PASS: saving the original subset does not auto-select new candidates; Select none also persists');
+    const originalSettings = JSON.parse(await readFile(path.join(config, 'qiandao-gateway/settings.json'), 'utf8'));
+    await json(path.join(config, 'qiandao-gateway/settings.json'), { ...originalSettings, models: [] });
+    await webAPI('provider/save', { id: 'qiandao-gateway', models: ['gpt-6-astra'] });
+    remoteModels = ['temporary-model']; await webAPI('provider/models', { id: 'qiandao-gateway' });
+    assert.ok((await savedProvider()).delisted.includes('gpt-6-astra'));
+    remoteModels = ['gpt-6-astra', 'newly-opened-model']; await webAPI('provider/models', { id: 'qiandao-gateway' });
+    assert.deepEqual((await pickState()).chosen, ['gpt-6-astra'], 'Restoring a delisted pick must not select a newly opened model');
+    await json(path.join(config, 'qiandao-gateway/settings.json'), originalSettings);
+    await webAPI('provider/save', { id: 'qiandao-gateway', models: picksBefore });
+    console.log('PASS: a delisted pick returns without selecting other newly opened models');
   }
   remoteModels = ['gpt-6-astra', 'remote-new'];
   let fetched = await webAPI('provider/models', { id: 'qiandao-gateway' });
