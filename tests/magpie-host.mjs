@@ -8,6 +8,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { asOffered, checkToolDelivery } from './tool-delivery.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const magpie = process.argv[2] || path.join(process.env.LOCALAPPDATA, 'Programs/magpie/magpie.exe');
@@ -26,13 +27,29 @@ let mode = 'pass', recover = 0, disconnected = false, active = 0, peak = 0;
 let emptyTurnSent = false;
 let longRetrySent = false;
 let wireOutput = [];
+let matchWireTools = false;
 const holds = [];
 function responseItems(res, output, id = 'resp_loop', variant = '') {
   const response = { id, object: 'response', status: 'completed', model: 'gpt-6-astra', output, usage: { input_tokens: 40, output_tokens: 34, total_tokens: 74 } };
   const events = [{ type: 'response.created', response: { ...response, status: 'in_progress', output: [] } }];
   for (const [output_index, item] of output.entries()) {
     if (variant === 'aggregate-only' && item.type !== 'reasoning') continue;
-    events.push({ type: 'response.output_item.added', output_index, item }, { type: 'response.output_item.done', output_index, item });
+    if (item.type === 'message') {
+      events.push({ type: 'response.output_item.added', output_index, item: { ...item, status: 'in_progress', content: [] } });
+      for (const [content_index, part] of item.content.entries()) {
+        const index = { item_id: item.id, output_index, content_index };
+        events.push({ type: 'response.content_part.added', ...index, part: { ...part, text: '' } }, { type: 'response.output_text.delta', ...index, delta: part.text }, { type: 'response.output_text.done', ...index, text: part.text }, { type: 'response.content_part.done', ...index, part });
+      }
+    } else if (['function_call', 'custom_tool_call'].includes(item.type)) {
+      const field = item.type === 'function_call' ? 'arguments' : 'input';
+      const prefix = item.type === 'function_call' ? 'function_call_arguments' : 'custom_tool_call_input';
+      const index = { item_id: item.id, output_index };
+      events.push({ type: 'response.output_item.added', output_index, item: { ...item, status: 'in_progress', [field]: '' } });
+      const middle = Math.floor(item[field].length / 2);
+      for (const delta of [item[field].slice(0, middle), item[field].slice(middle)]) events.push({ type: `response.${prefix}.delta`, ...index, delta });
+      events.push({ type: `response.${prefix}.done`, ...index, [field]: item[field] });
+    } else events.push({ type: 'response.output_item.added', output_index, item });
+    events.push({ type: 'response.output_item.done', output_index, item });
   }
   const completed = { ...response };
   if (variant === 'missing-output') delete completed.output;
@@ -66,7 +83,35 @@ const upstream = http.createServer(async (req, res) => {
   const body = JSON.parse(raw || '{}');
   captures.push({ body, url: req.url, headers: req.headers, at: Date.now() });
   active++; peak = Math.max(peak, active); res.once('close', () => { active--; });
-  if (mode === 'wire') return responseItems(res, wireOutput, 'resp_wire');
+  if (mode === 'tool-search') {
+    const tools = [...body.tools || [], ...(body.input || []).filter(item => item.type === 'additional_tools').flatMap(item => item.tools)];
+    const search = tools.find(tool => tool.type === 'tool_search' || tool.name === 'tool_search');
+    const result = body.input.find(item => (item.type === 'tool_search_output' || item.type === 'function_call_output') && item.call_id === 'call_discover');
+    if (result) {
+      const found = (result.tools || tools).flatMap(tool => tool.type === 'namespace' ? tool.tools.map(child => ({ name: child.name, namespace: tool.name })) : [{ name: tool.name }]).find(tool => tool.name?.includes('fixture_lookup'));
+      if (!found) { res.writeHead(400); return res.end('The client did not discover the fixture tool'); }
+      const calls = ['left', 'right'].map(label => ({ id: `fc_${label}`, type: 'function_call', status: 'completed', call_id: `call_${label}`, ...found, arguments: JSON.stringify({ label }) }));
+      const results = body.input.filter(item => item.type === 'function_call_output' && calls.some(call => call.call_id === item.call_id));
+      if (!results.length) return responseItems(res, calls, 'resp_parallel');
+      if (results.length !== calls.length || !['left', 'right'].every(label => JSON.stringify(results.find(item => item.call_id === `call_${label}`)?.output ?? '').includes(`DAO_FIXTURE_${label}`))) {
+        res.writeHead(400); return res.end(`Fixture lookup results are missing or mismatched: ${JSON.stringify(results)}`);
+      }
+      return responseItems(res, [{ type: 'message', id: 'msg_found', role: 'assistant', phase: 'final_answer', status: 'completed', content: [{ type: 'output_text', text: 'DAO_SEARCH_FOUND', annotations: [] }] }], 'resp_found');
+    }
+    if (!search) { res.writeHead(400); return res.end('Fixture request did not offer client tool search'); }
+    const args = { query: 'fixture_lookup' };
+    const call = { id: 'ts_fixture', call_id: 'call_discover', status: 'completed', ...(search.type === 'function'
+      ? { type: 'function_call', name: 'tool_search', arguments: JSON.stringify(args) }
+      : { type: 'tool_search_call', execution: 'client', arguments: args }) };
+    const progress = { type: 'message', id: 'msg_search', role: 'assistant', phase: 'commentary', status: 'completed', content: [{ type: 'output_text', text: 'Looking up the fixture.', annotations: [] }] };
+    return responseItems(res, JSON.stringify(body.input).includes('Show progress, then search.') ? [progress, call] : [call], 'resp_search');
+  }
+  if (mode === 'wire') {
+    const output = matchWireTools ? asOffered(wireOutput, body.tools || []) : wireOutput;
+    if (body.stream) return responseItems(res, output, 'resp_wire');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ id: 'resp_wire', object: 'response', status: 'completed', model: body.model, output }));
+  }
   if (mode === 'codex-loop') {
     const inputs = Array.isArray(body.input) ? body.input : [];
     const toolResult = id => inputs.find(x => x.call_id === id && /_output$/.test(x.type));
@@ -135,8 +180,8 @@ try {
   const manifest = JSON.parse(await readFile(path.join(fixture, 'package.json'), 'utf8'));
   manifest.magpie.options.settingsPort = pagePort; manifest.magpie.page.service.port = pagePort;
   await json(path.join(fixture, 'package.json'), manifest);
-  await json(path.join(config, 'settings.json'), { sessionReads: { asked: true, all: false, agents: {} } });
-  await json(path.join(config, 'providers.json'), { providers: [
+  await json(path.join(config, 'settings.json'), { searchAll: process.env.QIANDAO_HOST_SEARCH === '1', sessionReads: { asked: true, all: false, agents: {} } });
+  await json(path.join(config, 'providers.json'), { ...(process.env.QIANDAO_HOST_SEARCH === '1' ? { searches: [{ vendor: 'tavily', key: 'fixture-only' }] } : {}), providers: [
     { id: 'qiandao-gateway', models: ['gpt-6-astra', 'future-model'], pickedFrom: ['gpt-6-astra', 'future-model'] },
     ...(originalPort ? [{ id: 'baseline', name: 'Original gateway', key: 'fixture-only', responses: `http://127.0.0.1:${originalPort}/v1`, models: ['gpt-6-astra'], passErrors: true }] : []),
   ] });
@@ -225,6 +270,53 @@ try {
   assert.deepEqual((await savedProvider()).models, picksBefore.filter(id => id !== 'remote-new'), 'Reopening should remove only the delisted upstream pick');
   console.log('PASS: native model refresh updates candidates without selecting them; closure keeps models and login, balance is unavailable rather than zero');
   const post = (body = {}, signal = AbortSignal.timeout(20000)) => fetch(`http://${addr}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'codex_cli_rs/fixture', originator: 'codex_cli_rs', 'session-id': 'fixture-session', 'thread-id': 'fixture-thread' }, body: JSON.stringify({ model: 'qiandao-gateway/gpt-6-astra', input: 'fixture', stream: false, ...body }), signal });
+  mode = 'wire';
+  if (originalPort) {
+    const setOutput = output => { wireOutput = output; };
+    const direct = body => fetch(`http://127.0.0.1:${originalPort}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'gpt-6-astra', ...body }) });
+    await checkToolDelivery(direct, setOutput, 'direct original gateway');
+    await checkToolDelivery(body => post({ ...body, model: 'baseline/gpt-6-astra' }), setOutput, 'Magpie + original gateway (identical native replies)', true);
+    matchWireTools = true;
+    await checkToolDelivery(body => post({ ...body, model: 'baseline/gpt-6-astra' }), setOutput, 'Magpie + original gateway (declared tools)', true);
+  }
+  matchWireTools = true;
+  await checkToolDelivery(post, output => { wireOutput = output; });
+  mode = 'pass';
+  if (process.env.QIANDAO_CODEX_SEARCH === '1') {
+    const codexHome = path.join(directory, 'search-home'); await mkdir(codexHome);
+    const mcp = fileURLToPath(new URL('./tool-search-mcp.mjs', import.meta.url));
+    await json(path.join(codexHome, 'models.json'), { models: [codexModel] });
+    await writeFile(path.join(codexHome, 'config.toml'), `model = "qiandao-gateway/gpt-6-astra"\nmodel_provider = "fixture"\nmodel_catalog_json = "models.json"\nweb_search = "live"\napproval_policy = "never"\nsandbox_mode = "read-only"\n[model_providers.fixture]\nname = "dao fixture"\nbase_url = "http://${addr}/v1"\nwire_api = "responses"\n[mcp_servers.fixture]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(mcp)}]\nrequired = true\n[mcp_servers.fixture.tools.fixture_lookup]\napproval_mode = "approve"\n`);
+    mode = 'tool-search'; const before = captures.length;
+    const output = await new Promise((resolve, reject) => {
+      const child = execFile(process.env.CODEX_TEST_BIN || 'codex.exe', ['exec', '--ephemeral', '--trust', '--skip-git-repo-check', '--json', '-C', directory, 'Discover the fixture lookup tool and report the result.'], { env: { ...process.env, CODEX_HOME: codexHome }, windowsHide: true, timeout: 45000 }, (error, stdout, stderr) => error ? reject(new Error(`Search client failed: ${stderr.slice(-1000)}; ${stdout.slice(-1400)}`)) : resolve(stdout));
+      child.stdin.end();
+    });
+    assert.ok(output.includes('DAO_SEARCH_FOUND'), `Codex stopped without returning the discovered tool: ${output}`);
+    assert.equal(captures.length - before, 3);
+    console.log('PASS: real Codex discovers the MCP tool, executes two calls in one turn, and returns both results to their original IDs');
+    mode = 'pass';
+  }
+  mode = 'tool-search';
+  for (const webSearch of [false, true]) {
+    const search = { type: 'tool_search', execution: 'client', description: 'Find a tool', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } };
+    const tools = webSearch ? [search, { type: 'web_search' }] : [search];
+    for (const content of ['Find the fixture tool.', 'Show progress, then search.']) {
+      const input = [{ type: 'additional_tools', role: 'developer', tools }, { type: 'message', role: 'user', content }];
+      const before = captures.length;
+      const res = await post({ stream: true, input });
+      assert.equal(res.status, 200);
+      const events = (await res.text()).split(/\r?\n/).filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6)));
+      const items = events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
+      assert.ok(items.some(item => item.type === 'tool_search_call' && item.execution === 'client' && item.call_id === 'call_discover' && item.arguments?.query === 'fixture_lookup'), `Client lost the search call (web_search=${webSearch}); delivered: ${JSON.stringify(items.map(item => item.type))}`);
+      if (content.startsWith('Show progress')) assert.ok(items.some(item => item.type === 'message' && item.phase === 'commentary'), `Progress phase changed (web_search=${webSearch}): ${items.map(item => `${item.type}:${item.phase || ''}`)}`);
+      if (!webSearch || process.env.QIANDAO_HOST_SEARCH !== '1') assert.deepEqual(captures.at(-1).body.input, input);
+      else assert.ok(captures.at(-1).body.tools.some(tool => tool.type === 'function' && tool.name === 'web_search'));
+      assert.equal(captures.length - before, 1);
+    }
+  }
+  console.log('PASS: client tool discovery survives both direct and web-search-capable Responses requests');
+  mode = 'pass';
   for (const model of ['gpt-6-astra', 'future-model']) {
     const before = captures.length;
     const response = await post({ model: `qiandao-gateway/${model}`, reasoning: { effort: 'high' }, prompt_cache_key: 'fixture-cache', client_metadata: { preserved: 'value' }, additional_tools: [{ type: 'tool_search' }], input: [{ type: 'reasoning', id: 'rs_fixture', encrypted_content: 'fixture-encrypted' }, { role: 'user', content: 'fixture' }] });
@@ -252,6 +344,7 @@ try {
   console.log('PASS: native Magpie Fast enabled/disabled without client tier, retries retain Priority');
   if (originalPort) {
     mode = 'wire';
+    matchWireTools = false;
     const readItems = text => text.split(/\r?\n\r?\n/).flatMap(block => {
       try {
         const value = JSON.parse(block.split(/\r?\n/).filter(x => x.startsWith('data:')).map(x => x.slice(5).trimStart()).join('\n'));
