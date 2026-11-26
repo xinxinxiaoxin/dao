@@ -15,7 +15,7 @@ import { startPage } from '../lib/page-service.mjs';
 const fast = { budgetMs: 2000, upstreamTimeoutMs: 1000, rateDelays: [2], errorDelays: [2] };
 const request = (signal, input = 'hello') => new Request('https://example.invalid/v1/responses', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input, service_tier: 'priority' }), signal });
 const limited = () => Response.json({ error: { code: 'rate_limit_exceeded', message: 'Too many requests' } }, { status: 429 });
-const success = () => Response.json({ id: 'resp_ok', status: 'completed', output: [] });
+const success = () => Response.json({ id: 'resp_ok', status: 'completed', output: [{ type: 'message', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text: 'OK' }] }] });
 const event = value => `event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`;
 
 async function fixture(t, limit = 5) {

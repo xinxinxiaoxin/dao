@@ -23,7 +23,18 @@ const captures = [];
 const metadataCalls = [];
 let remoteModels = ['gpt-6-astra', 'remote-old'], metadataClosed = false;
 let mode = 'pass', recover = 0, disconnected = false, active = 0, peak = 0;
+let emptyTurnSent = false;
 const holds = [];
+function responseItems(res, output, id = 'resp_loop') {
+  const response = { id, object: 'response', status: 'completed', model: 'gpt-6-astra', output, usage: { input_tokens: 40, output_tokens: 34, total_tokens: 74 } };
+  const events = [{ type: 'response.created', response: { ...response, status: 'in_progress', output: [] } }];
+  for (const [output_index, item] of output.entries()) {
+    events.push({ type: 'response.output_item.added', output_index, item }, { type: 'response.output_item.done', output_index, item });
+  }
+  events.push({ type: 'response.completed', response });
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  res.end(events.map((e, sequence_number) => `event: ${e.type}\ndata: ${JSON.stringify({ ...e, sequence_number })}\n\n`).join(''));
+}
 function reply(res, body, model) {
   const item = { id: 'msg_fixture', type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'qiandao fixture OK' }] };
   const response = { id: 'resp_fixture', object: 'response', status: 'completed', model, output: [item], usage: { input_tokens: 100, output_tokens: 5, input_tokens_details: { cached_tokens: 80 } }, service_tier: body.service_tier || 'default' };
@@ -50,6 +61,16 @@ const upstream = http.createServer(async (req, res) => {
   const body = JSON.parse(raw || '{}');
   captures.push({ body, url: req.url, headers: req.headers });
   active++; peak = Math.max(peak, active); res.once('close', () => { active--; });
+  if (mode === 'codex-loop') {
+    const inputs = Array.isArray(body.input) ? body.input : [];
+    if (inputs.some(x => x.call_id === 'call_dao_second' && /_output$/.test(x.type))) return responseItems(res, [{ type: 'message', id: 'msg_final', role: 'assistant', phase: 'final_answer', status: 'completed', content: [{ type: 'output_text', text: 'DAO_TOOL_LOOP_OK: 364', annotations: [], logprobs: [] }] }], 'resp_final');
+    if (inputs.some(x => x.call_id === 'call_dao_first' && /_output$/.test(x.type))) {
+      assert.ok(inputs.some(x => x.role === 'assistant' && x.phase === 'commentary'), 'Assistant phase was dropped from tool history');
+      if (!emptyTurnSent) { emptyTurnSent = true; return responseItems(res, [], 'resp_empty'); }
+      return responseItems(res, [{ type: 'custom_tool_call', id: 'ctc_second', call_id: 'call_dao_second', name: 'exec', input: 'text(323 + 41)', status: 'completed' }], 'resp_second');
+    }
+    return responseItems(res, [{ type: 'message', id: 'msg_progress', role: 'assistant', phase: 'commentary', status: 'completed', content: [{ type: 'output_text', text: 'I will run two calculations.', annotations: [], logprobs: [] }] }, { type: 'custom_tool_call', id: 'ctc_first', call_id: 'call_dao_first', name: 'exec', input: 'text(17 * 19)', status: 'completed' }], 'resp_first');
+  }
   if (mode === 'hang') { res.once('close', () => { disconnected = true; }); return; }
   if (mode === 'hold') { holds.push(() => reply(res, body, body.model)); return; }
   if (mode === 'rate' || (mode === 'recover' && ++recover <= 2)) {
@@ -195,6 +216,22 @@ try {
   await webAPI('agent-fast', { for: 'codex', ref: 'qiandao-gateway/gpt-6-astra', fast: false });
   await (await post()).text(); assert.notEqual(captures.at(-1).body.service_tier, 'priority');
   console.log('PASS: native Magpie Fast enabled/disabled without client tier, retries retain Priority');
+  if (process.env.QIANDAO_CODEX_LOOP === '1') {
+    const codexHome = path.join(directory, 'codex-home'); await mkdir(codexHome);
+    await writeFile(path.join(codexHome, 'config.toml'), `model = "qiandao-gateway/gpt-6-astra"\nmodel_provider = "fixture"\napproval_policy = "never"\nsandbox_mode = "read-only"\n[model_providers.fixture]\nname = "dao fixture"\nbase_url = "http://${addr}/v1"\nwire_api = "responses"\n`);
+    mode = 'codex-loop'; const beforeLoop = captures.length;
+    const codex = process.env.CODEX_TEST_BIN || 'C:/Program Files/WindowsApps/OpenAI.Codex_26.1120.6357.0_x64__2p2nqsd0c76g0/app/resources/codex.exe';
+    const result = await new Promise((resolve, reject) => {
+      const child = execFile(codex, ['exec', '--ephemeral', '--skip-git-repo-check', '--json', '-C', directory, 'Use exec for two separate JavaScript calculations: text(17 * 19), then text(323 + 41). Do not access files, shell or network. Finish with DAO_TOOL_LOOP_OK: 364.'], { env: { ...process.env, CODEX_HOME: codexHome }, windowsHide: true, timeout: 60000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(error) : resolve({ stdout, stderr }));
+      child.stdin.end();
+    });
+    assert.ok(result.stdout.includes('DAO_TOOL_LOOP_OK: 364'), `Codex stopped before finishing the second tool call: ${result.stdout}`);
+    assert.equal(captures.length - beforeLoop, 4, 'The empty completion must use one recovery attempt');
+    const loopCalls = captures.slice(beforeLoop);
+    assert.deepEqual(loopCalls[1].body, loopCalls[2].body, 'Recovery changed the tool history');
+    console.log('PASS: real Codex executes two tools and finishes after dao recovers an empty completed response');
+    mode = 'pass';
+  }
   const pages = await webAPI('plugin-pages');
   assert.ok(pages.some(item => item.title === 'dao'));
   const launch = await fetch(new URL(pages[0].url, web), { headers: { cookie } });

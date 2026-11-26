@@ -1,6 +1,6 @@
 {
   "name": "dao",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.0-rc.6",
   "private": true,
   "type": "module",
   "main": "./provider.mjs",
@@ -10,7 +10,7 @@
   "bugs": {"url": "https://github.com/xinxinxiaoxin/dao/issues"},
   "license": "MIT",
   "keywords": ["magpie-plugin", "opencode-plugin", "provider", "qiandao", "dao"],
-  "files": ["provider.mjs", "qiandao.middleware.mjs", "lib", "ui", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "files": ["provider.mjs", "qiandao.middleware.mjs", "lib", "ui", "docs/recovery-policy.md", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
   "scripts": {"test": "node --test tests/*.test.mjs", "test:host": "node tests/magpie-host.mjs", "test:parity": "node tests/parity.mjs"},
   "magpie": {
     "name": "dao",

@@ -22,4 +22,6 @@ The service's page token persists in dao's data directory across host generation
 
 The shared scheduler and complete-response retry policy are dao behavior, rather than requirements of the plugin contract. The account-level concurrency advertised by `magpie.maxConcurrency` is not used as a substitute for dao's shared upstream limit.
 
+Responses completion alone does not establish a deliverable. dao recovers empty, reasoning-only, and commentary-only completed output before delivery, within the existing attempt budget. Function and custom-tool calls remain unchanged; tool results and assistant `phase` values round-trip. OpenAI's [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) documents the distinction between `commentary` and `final_answer`. A valid final answer is not reclassified by its wording.
+
 Validation uses isolated configuration and a local upstream. Contract regressions cover preservation of user defaults and model metadata, removal from the live model list, and provider availability when the settings port is occupied.
