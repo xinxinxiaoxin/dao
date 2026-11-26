@@ -25,14 +25,18 @@ let remoteModels = ['gpt-6-astra', 'remote-old'], metadataClosed = false;
 let mode = 'pass', recover = 0, disconnected = false, active = 0, peak = 0;
 let emptyTurnSent = false;
 let longRetrySent = false;
+let wireOutput = [];
 const holds = [];
-function responseItems(res, output, id = 'resp_loop') {
+function responseItems(res, output, id = 'resp_loop', variant = '') {
   const response = { id, object: 'response', status: 'completed', model: 'gpt-6-astra', output, usage: { input_tokens: 40, output_tokens: 34, total_tokens: 74 } };
   const events = [{ type: 'response.created', response: { ...response, status: 'in_progress', output: [] } }];
   for (const [output_index, item] of output.entries()) {
+    if (variant === 'aggregate-only' && item.type !== 'reasoning') continue;
     events.push({ type: 'response.output_item.added', output_index, item }, { type: 'response.output_item.done', output_index, item });
   }
-  events.push({ type: 'response.completed', response });
+  const completed = { ...response };
+  if (variant === 'missing-output') delete completed.output;
+  events.push({ type: 'response.completed', response: completed });
   res.writeHead(200, { 'content-type': 'text/event-stream' });
   res.end(events.map((e, sequence_number) => `event: ${e.type}\ndata: ${JSON.stringify({ ...e, sequence_number })}\n\n`).join(''));
 }
@@ -62,6 +66,7 @@ const upstream = http.createServer(async (req, res) => {
   const body = JSON.parse(raw || '{}');
   captures.push({ body, url: req.url, headers: req.headers, at: Date.now() });
   active++; peak = Math.max(peak, active); res.once('close', () => { active--; });
+  if (mode === 'wire') return responseItems(res, wireOutput, 'resp_wire');
   if (mode === 'codex-loop') {
     const inputs = Array.isArray(body.input) ? body.input : [];
     const toolResult = id => inputs.find(x => x.call_id === id && /_output$/.test(x.type));
@@ -76,7 +81,12 @@ const upstream = http.createServer(async (req, res) => {
       assert.match(JSON.stringify(first.output), /\b323\b/, 'The first calculation did not run');
       assert.doesNotMatch(JSON.stringify(first.output), /error|rejected|failed/i);
       assert.ok(inputs.some(x => x.role === 'assistant' && x.phase === 'commentary'), 'Assistant phase was dropped from tool history');
-      if (!emptyTurnSent) { emptyTurnSent = true; return responseItems(res, [], 'resp_empty'); }
+      if (!emptyTurnSent) {
+        emptyTurnSent = true;
+        if (process.env.QIANDAO_OMITTED_OUTPUT === '1') return responseItems(res, [{ type: 'reasoning', id: 'rs_only', summary: [{ type: 'summary_text', text: 'Reviewing documentation and scripts' }] }], 'resp_empty', 'missing-output');
+        if (process.env.QIANDAO_AGGREGATE_ONLY === '1') return responseItems(res, [{ type: 'reasoning', id: 'rs_only', summary: [{ type: 'summary_text', text: 'Reviewing documentation and scripts' }] }, { type: 'custom_tool_call', id: 'ctc_missing', call_id: 'call_dao_second', name: 'exec', input: 'text(323 + 41)', status: 'completed' }], 'resp_empty', 'aggregate-only');
+        return responseItems(res, [], 'resp_empty');
+      }
       return responseItems(res, [{ type: 'custom_tool_call', id: 'ctc_second', call_id: 'call_dao_second', name: 'exec', input: 'text(323 + 41)', status: 'completed' }], 'resp_second');
     }
     return responseItems(res, [{ type: 'message', id: 'msg_progress', role: 'assistant', phase: 'commentary', status: 'completed', content: [{ type: 'output_text', text: 'I will run two calculations.', annotations: [], logprobs: [] }] }, { type: 'custom_tool_call', id: 'ctc_first', call_id: 'call_dao_first', name: 'exec', input: 'text(17 * 19)', status: 'completed' }], 'resp_first');
@@ -101,6 +111,12 @@ const upstream = http.createServer(async (req, res) => {
 const listen = async server => { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return server.address().port; };
 const freePort = async () => { const server = http.createServer(); const port = await listen(server); await new Promise(resolve => server.close(resolve)); return port; };
 const upstreamPort = await listen(upstream);
+let originalGateway, originalPort;
+if (process.env.QIANDAO_PATH_COMPARE === '1') {
+  const { createGateway, loadConfig } = await import('../docs/research/qiandao-source/gateway.mjs');
+  originalGateway = createGateway({ ...loadConfig({}), upstreamBaseUrl: `http://127.0.0.1:${upstreamPort}`, upstreamApiKey: 'fixture-only' });
+  originalPort = await listen(originalGateway.server);
+}
 const port = await freePort(), webPort = await freePort(), pagePort = await freePort();
 const addr = `127.0.0.1:${port}`, web = `http://127.0.0.1:${webPort}`, page = `http://127.0.0.1:${pagePort}`;
 const env = { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, SystemDrive: process.env.SystemDrive, COMSPEC: process.env.COMSPEC, PATH: path.join(process.env.SystemRoot, 'System32'), HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, 'Local'), APPDATA: path.join(home, 'Roaming'), TEMP: directory, TMP: directory, XDG_CONFIG_HOME: path.dirname(config), XDG_CACHE_HOME: path.join(directory, 'cache'), XDG_DATA_HOME: path.join(directory, 'data'), XDG_STATE_HOME: path.join(directory, 'state'), MAGPIE_BIN_DIR: path.join(directory, 'bin'), MAGPIE_BUN: bun, MAGPIE_ADDR: addr, MAGPIE_PLUGIN_MARKET: 'off', DO_NOT_TRACK: '1', MAGPIE_WEB_KEY: randomUUID() };
@@ -120,7 +136,10 @@ try {
   manifest.magpie.options.settingsPort = pagePort; manifest.magpie.page.service.port = pagePort;
   await json(path.join(fixture, 'package.json'), manifest);
   await json(path.join(config, 'settings.json'), { sessionReads: { asked: true, all: false, agents: {} } });
-  await json(path.join(config, 'providers.json'), { providers: [{ id: 'qiandao-gateway', models: ['gpt-6-astra', 'future-model'], pickedFrom: ['gpt-6-astra', 'future-model'] }] });
+  await json(path.join(config, 'providers.json'), { providers: [
+    { id: 'qiandao-gateway', models: ['gpt-6-astra', 'future-model'], pickedFrom: ['gpt-6-astra', 'future-model'] },
+    ...(originalPort ? [{ id: 'baseline', name: 'Original gateway', key: 'fixture-only', responses: `http://127.0.0.1:${originalPort}/v1`, models: ['gpt-6-astra'], passErrors: true }] : []),
+  ] });
   await json(path.join(config, 'qiandao-gateway/manual-models.json'), ['future-model']);
   await json(path.join(config, 'qiandao-gateway/settings.json'), { baseURL: `http://127.0.0.1:${upstreamPort}/v1`, maxConcurrency: 2, models: ['gpt-6-astra', 'removable-model'] });
   const catalogDir = path.join(env.XDG_CACHE_HOME, 'magpie'); await mkdir(catalogDir, { recursive: true });
@@ -231,6 +250,34 @@ try {
   await webAPI('agent-fast', { for: 'codex', ref: 'qiandao-gateway/gpt-6-astra', fast: false });
   await (await post()).text(); assert.notEqual(captures.at(-1).body.service_tier, 'priority');
   console.log('PASS: native Magpie Fast enabled/disabled without client tier, retries retain Priority');
+  if (originalPort) {
+    mode = 'wire';
+    const readItems = text => text.split(/\r?\n\r?\n/).flatMap(block => {
+      try {
+        const value = JSON.parse(block.split(/\r?\n/).filter(x => x.startsWith('data:')).map(x => x.slice(5).trimStart()).join('\n'));
+        return value.type === 'response.output_item.done' ? [value.item] : [];
+      } catch { return []; }
+    });
+    for (const tool of [
+      { type: 'function_call', id: 'fc_wire', call_id: 'call_wire', name: 'exec_command', arguments: '{"cmd":"fixture"}', status: 'completed' },
+      { type: 'custom_tool_call', id: 'ctc_wire', call_id: 'call_wire', name: 'exec', input: 'text(323)', status: 'completed' },
+    ]) {
+      wireOutput = [{ type: 'reasoning', id: 'rs_wire', summary: [{ type: 'summary_text', text: 'Inspecting fixture documents' }] }, tool];
+      const definition = tool.type === 'function_call' ? { type: 'function', name: tool.name, parameters: { type: 'object', properties: { cmd: { type: 'string' } } } } : { type: 'custom', name: tool.name, format: { type: 'text' } };
+      const input = [{ type: 'additional_tools', role: 'developer', tools: [{ type: 'namespace', name: 'functions', tools: [definition] }] }, { role: 'user', content: 'Inspect the fixture.' }];
+      const body = { stream: true, input, reasoning: { effort: 'high', context: 'all_turns' } };
+      const old = readItems(await (await post({ ...body, model: 'baseline/gpt-6-astra' })).text());
+      const oldRequest = captures.at(-1).body;
+      const current = readItems(await (await post(body)).text());
+      const pluginRequest = captures.at(-1).body;
+      assert.equal(pluginRequest.reasoning.context, 'all_turns', 'Restored Codex tools lost their original reasoning context');
+      assert.deepEqual(current, old, 'Plugin and original gateway changed delivered output items differently');
+      assert.ok(current.some(x => x.type === tool.type && x.call_id === tool.call_id));
+      console.log(`PASS: Magpie -> original gateway and Magpie -> dao deliver identical ${tool.type} items`);
+      console.log(JSON.stringify({ requestShapes: { original: { additionalTools: oldRequest.input?.some(x => x.type === 'additional_tools'), tools: oldRequest.tools?.length, reasoning: oldRequest.reasoning }, plugin: { additionalTools: pluginRequest.input?.some(x => x.type === 'additional_tools'), tools: pluginRequest.tools?.length, reasoning: pluginRequest.reasoning } } }));
+    }
+    mode = 'pass';
+  }
   if (process.env.QIANDAO_CODEX_LOOP === '1') {
     const codexHome = path.join(directory, 'codex-home'); await mkdir(codexHome);
     await writeFile(path.join(codexHome, 'config.toml'), `model = "qiandao-gateway/gpt-6-astra"\nmodel_provider = "fixture"\napproval_policy = "never"\nsandbox_mode = "read-only"\n[model_providers.fixture]\nname = "dao fixture"\nbase_url = "http://${addr}/v1"\nwire_api = "responses"\n`);
@@ -244,7 +291,7 @@ try {
     assert.equal(captures.length - beforeLoop, 4, 'The empty completion must use one recovery attempt');
     const loopCalls = captures.slice(beforeLoop);
     assert.deepEqual(loopCalls[1].body, loopCalls[2].body, 'Recovery changed the tool history');
-    console.log('PASS: real Codex executes two tools and finishes after dao recovers an empty completed response');
+    console.log('PASS: real Codex executes two tools and finishes after dao recovers a completion without delivered output');
     mode = 'pass';
   }
   const pages = await webAPI('plugin-pages');
@@ -357,6 +404,7 @@ try {
   if (gateway && gateway.exitCode === null) gateway.kill();
   if (ended) await ended;
   upstream.closeAllConnections(); await new Promise(resolve => upstream.close(resolve));
+  if (originalGateway) { originalGateway.server.closeAllConnections(); await new Promise(resolve => originalGateway.server.close(resolve)); }
   assert.equal(path.dirname(await realpath(directory)), await realpath(parent));
   await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
 }

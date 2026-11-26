@@ -13,7 +13,8 @@ const { createGateway, loadConfig } = await import(pathToFileURL(resolve(process
 const directory = await mkdtemp(join(tmpdir(), 'qiandao-parity-'));
 const settings = await createSettings(directory);
 const sse = value => `event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`;
-const done = sse({ type: 'response.completed', response: { id: 'fixture', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'fixture OK' }] }] } });
+const item = { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'fixture OK' }] };
+const done = sse({ type: 'response.output_item.done', item }) + sse({ type: 'response.completed', response: { id: 'fixture', output: [item] } });
 let scenario, sent = [];
 const upstream = http.createServer(async (req, res) => {
   const chunks = []; for await (const chunk of req) chunks.push(chunk);

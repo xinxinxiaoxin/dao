@@ -77,7 +77,8 @@ test('同一请求正在恢复时再次调用不会重复发送', async t => {
 test('整段缓存丢弃失败片段，完成后仅交付成功结果', async t => {
   const { scheduler } = await fixture(t);
   let calls = 0;
-  const relay = new Relay(scheduler, { policy: fast, fetchUpstream: async () => new Response(++calls === 1 ? event({ type: 'response.output_text.delta', delta: 'bad fragment' }) : event({ type: 'response.completed', response: { output: ['good result'] } }), { headers: { 'content-type': 'text/event-stream' } }) });
+  const item = { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'good result' }] };
+  const relay = new Relay(scheduler, { policy: fast, fetchUpstream: async () => new Response(++calls === 1 ? event({ type: 'response.output_text.delta', delta: 'bad fragment' }) : event({ type: 'response.output_item.done', item }) + event({ type: 'response.completed', response: { output: [item] } }), { headers: { 'content-type': 'text/event-stream' } }) });
   const text = await (await relay.send(request(), { id: 'cut-stream', attempt: 1 })).text();
   assert.match(text, /good result/);
   assert.doesNotMatch(text, /bad fragment/);
@@ -160,17 +161,19 @@ test('Provider还原Codex字段、原生Fast、地址热改及手填模型', asy
   const models = await provider.provider.models({ models: {} });
   assert.deepEqual(models['future-model'].serviceTiers, ['priority']);
   const loader = await provider.auth.loader(async () => ({ type: 'api', key: 'fixture-only' }));
-  const original = { model: 'qiandao-gateway/gpt-6-astra', input: [{ type: 'reasoning', encrypted_content: 'fixture' }], additional_tools: [{ type: 'tool_search' }], prompt_cache_key: 'stable-cache', reasoning: { effort: 'high' } };
+  const original = { model: 'qiandao-gateway/gpt-6-astra', input: [{ type: 'reasoning', encrypted_content: 'fixture' }], additional_tools: [{ type: 'tool_search' }], prompt_cache_key: 'stable-cache', reasoning: { effort: 'high', context: 'all_turns', summary: 'auto' } };
   const ctx = { protocol: 'responses', state: {}, provider: { id: 'qiandao-gateway' } };
   onRequest(original, ctx);
   const tagged = onProvider(original, ctx);
   delete tagged.additional_tools;
   tagged.model = 'gpt-6-astra'; tagged.service_tier = 'priority';
+  tagged.reasoning = { effort: 'medium' };
   await loader.fetch('https://qiandao.invalid/v1/responses', { method: 'POST', headers: { 'user-agent': 'codex/fixture' }, body: JSON.stringify(tagged) });
   assert.equal(wire[0].url, 'https://one.invalid/v1/responses');
   assert.equal(wire[0].body.prompt_cache_key, 'stable-cache');
   assert.deepEqual(wire[0].body.additional_tools, original.additional_tools);
   assert.equal(wire[0].body.service_tier, 'priority');
+  assert.deepEqual(wire[0].body.reasoning, { effort: 'medium', context: 'all_turns', summary: 'auto' });
   assert.equal(wire[0].body.client_metadata?._qiandao_request, undefined);
   await settings.save({ ...(await settings.read()), baseURL: 'https://two.invalid/prefix/v1' });
   await loader.fetch('https://qiandao.invalid/v1/responses', { method: 'POST', body: JSON.stringify({ model: 'gpt-6-astra', input: 'second' }) });

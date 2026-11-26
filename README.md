@@ -88,7 +88,7 @@ npm pack
 Pass a release archive as the final argument to test its contents:
 
 ```sh
-node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.7.tgz
+node tests/magpie-host.mjs /path/to/magpie /path/to/bun dao-0.1.0-rc.8.tgz
 ```
 
 For comparison with the original gateway:
@@ -100,7 +100,7 @@ npm run test:parity
 
 You can also pass the original gateway file to `node tests/parity.mjs /path/to/gateway.mjs`.
 
-Validation covers 42 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4827 host. Host checks include native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. Browser checks exercise the settings page inside Magpie's `allow-scripts` iframe: clicking Save writes the URL and concurrency, invalid values remain unsaved, Enter saves, and the provider successfully uses the saved URL.
+Validation covers 45 core and contract tests, six old/new gateway comparisons, and an isolated Magpie 0.1.4827 host. Host checks include native model refresh and selection, balance queries, closures and reopening, manually added models, native Fast controls, request-field preservation, live settings changes, shared concurrency during host reload, terminal errors, bounded 429 recovery, and cancellation. Browser checks exercise the settings page inside Magpie's `allow-scripts` iframe: clicking Save writes the URL and concurrency, invalid values remain unsaved, Enter saves, and the provider successfully uses the saved URL.
 
 For the browser regression, `node tests/settings-browser-fixture.mjs` serves the actual settings page in an `allow-scripts` iframe and writes its test URL and settings path to `.sandbox/settings-browser-session.json`. Open that URL with the Ego browser SDK and run the exported `checkSettingsSave(page, { settings, baseURL: "https://example.invalid" })` from `tests/settings-browser.mjs`. It checks the persisted file as well as the visible success message. Stop the fixture with Ctrl+C when finished.
 
@@ -111,6 +111,12 @@ In the same isolated session, open the dao provider editor and run `checkModelSe
 Host tests use isolated configuration, fake credentials, and a local upstream. They shorten delays and use a three-attempt limit to detect retry multiplication; core tests verify the production defaults.
 
 Set `QIANDAO_RETRY_AFTER=1` for a real-time host check: the upstream first returns `Retry-After: 120`, and the test verifies that the second request arrives after 30 seconds with the same body. Deterministic clock tests cover later upstream delays and budget boundaries.
+
+For streaming Responses, successful delivery requires usable item events before completion. The final aggregate alone does not deliver a tool call to Codex. Missing aggregate output, reasoning-only streams, and aggregate-only tool calls are recovered before delivery. The original reasoning context and summary are retained while Magpie's selected effort still applies.
+
+Set `QIANDAO_CODEX_LOOP=1` with `QIANDAO_OMITTED_OUTPUT=1` or `QIANDAO_AGGREGATE_ONLY=1` to exercise these two stop cases with the real Codex CLI. Set `QIANDAO_PATH_COMPARE=1` to compare the original gateway and dao behind the same isolated Magpie using identical Responses tool events.
+
+The plugin retains the latest 100 response-structure records in `qiandao-gateway/scheduler.json`: version, request/response identifiers, attempt, HTTP status, terminal event and output item types. Records exclude prompts, answers, reasoning text, tool arguments and credentials. The settings service health response includes its running version.
 
 ## Limitations
 

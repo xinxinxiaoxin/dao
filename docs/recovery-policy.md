@@ -6,7 +6,9 @@ dao runs inside Magpie as a provider plugin. Codex sends a request to Magpie, th
 
 dao buffers the entire upstream response before delivery. Recovery can discard an unsuccessful response before Codex sees text or tool calls. A successful tool call is delivered once; Codex executes it and sends its result in a new request with its own budget. Assistant `phase`, tool names, call IDs, arguments, outputs, reasoning data and Fast selection are preserved.
 
-A completed Responses result must contain something the client can use: an answer, refusal, or tool/output item. Empty completed output, reasoning-only output, or only `phase: "commentary"` without a tool call is retried before delivery. A valid `final_answer`, an unphased text answer, an explicit refusal, or `response.incomplete` keeps its upstream meaning. dao does not guess from the wording whether a valid final answer has finished the user's task.
+A completed Responses result must contain something the client can use: an answer, refusal, or tool/output item. For SSE, that output must be delivered in `response.output_item.done` before the terminal event; a tool present only in `response.completed.response.output` is insufficient for Codex. This check also applies when the aggregate `output` field is omitted or null. Non-streaming JSON is checked through its output array. Empty completed output, reasoning-only output, or only `phase: "commentary"` without a tool call is retried before delivery. A valid `final_answer`, an unphased text answer, an explicit refusal, or `response.incomplete` keeps its upstream meaning. dao does not guess from the wording whether a valid final answer has finished the user's task.
+
+Restoring a Codex request retains its original `reasoning.context` and `reasoning.summary`. Only the selected effort is overlaid from Magpie's reasoning settings; the converted reasoning object does not replace the original one.
 
 ## Limits and delays
 
@@ -39,6 +41,10 @@ dao disables extra patience waiting and rate-limit rests for its own provider. M
 If retries cannot recover within the limits, dao returns an explicit failure. It cannot guarantee that every failure disappears, cannot keep working after the client cancels, and cannot correct a model that intentionally marks a premature statement as a valid final answer without guessing at its intent.
 
 ## Verification
+
+The latest 100 upstream response-structure records are retained in `qiandao-gateway/scheduler.json`, under the existing cross-host lock. Each record identifies the running version, request, attempt, HTTP status, completion event, response ID and output item types. They contain no prompt, answer, reasoning text, tool arguments or credentials.
+
+`QIANDAO_OMITTED_OUTPUT=1` and `QIANDAO_AGGREGATE_ONLY=1`, together with `QIANDAO_CODEX_LOOP=1`, test reasoning-only completion without an aggregate and a tool call present only in the aggregate. Both cases must be recovered before Codex stops; both tool results and the final answer must reach the client. `QIANDAO_PATH_COMPARE=1` compares ordinary function calls and custom tool calls through Magpie plus the original gateway and Magpie plus dao.
 
 The real Codex CLI is exercised against an isolated Magpie host and a local upstream. The upstream returns a first tool call, then an empty completed response after the tool result, then a second tool call and a final answer. dao must hide the empty response, resend identical tool history once, and let Codex finish both calls. Use `QIANDAO_CODEX_LOOP=1` with `tests/magpie-host.mjs`; set `CODEX_TEST_BIN` to the installed Codex executable when its location differs.
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classify } from '../lib/classify.mjs';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createRuntime } from '../lib/provider.mjs';
@@ -20,6 +20,30 @@ test('Responses that carry only reasoning or a progress update cannot end a tool
   ]) assert.equal(classify(200, 'text/event-stream', event({ type: 'response.completed', response: { status: 'completed', output } })).retry, true);
 });
 
+test('completed Responses validate item events even when the aggregate output is missing', () => {
+  const reasoning = { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Reviewing documentation and scripts' }] };
+  for (const output of [undefined, null, []]) {
+    const stream = event({ type: 'response.output_item.done', item: reasoning }) + event({ type: 'response.completed', response: { status: 'completed', output } });
+    assert.equal(classify(200, 'text/event-stream', stream).retry, true);
+    assert.equal(classify(200, 'application/json', JSON.stringify({ status: 'completed', output })).retry, true);
+  }
+});
+
+test('aggregate-only tool calls do not count as delivered SSE output', () => {
+  const tool = { type: 'function_call', call_id: 'call_missing', name: 'read', arguments: '{}' };
+  const stream = event({ type: 'response.output_item.done', item: { type: 'reasoning', summary: [] } }) + event({ type: 'response.completed', response: { status: 'completed', output: [tool] } });
+  assert.equal(classify(200, 'text/event-stream', stream).retry, true);
+  assert.equal(classify(200, 'application/json', JSON.stringify({ status: 'completed', output: [tool] })).retry, false);
+});
+
+test('event names and DONE do not bypass Responses deliverability checks', () => {
+  assert.equal(classify(200, 'text/event-stream', 'event: response.completed\ndata: {"response":{"status":"completed"}}\n\n').retry, true);
+  assert.equal(classify(200, 'text/event-stream', event({ type: 'response.output_item.done', item: { type: 'reasoning' } }) + 'data: [DONE]\n\n').retry, true);
+  for (const item of [null, {}, { type: 'message', content: [] }, { type: 'function_call', name: 'read' }]) {
+    assert.equal(classify(200, 'text/event-stream', event({ type: 'response.output_item.done', item }) + event({ type: 'response.completed', response: { status: 'completed', output: [item] } })).retry, true);
+  }
+});
+
 test('tool calls, refusals, final answers and explicit incomplete responses stay deliverable', () => {
   const message = { type: 'message', role: 'assistant', phase: 'commentary', content: [{ type: 'output_text', text: 'I will check.' }] };
   for (const item of [
@@ -29,8 +53,9 @@ test('tool calls, refusals, final answers and explicit incomplete responses stay
     { ...message, phase: undefined },
     { ...message, content: [{ type: 'refusal', refusal: 'I cannot help.' }] },
   ]) {
-    assert.equal(classify(200, 'text/event-stream', event({ type: 'response.completed', response: { status: 'completed', output: [message, item] } })).retry, false);
+    assert.equal(classify(200, 'text/event-stream', event({ type: 'response.output_item.done', item }) + event({ type: 'response.completed', response: { status: 'completed', output: [message, item] } })).retry, false);
     assert.equal(classify(200, 'text/event-stream', event({ type: 'response.output_item.done', item }) + event({ type: 'response.completed', response: { status: 'completed', output: [] } })).retry, false);
+    assert.equal(classify(200, 'text/event-stream', event({ type: 'response.output_item.done', item }) + event({ type: 'response.completed', response: { status: 'completed' } })).retry, false);
   }
   assert.equal(classify(200, 'text/event-stream', event({ type: 'response.incomplete', response: { output: [], incomplete_details: { reason: 'max_output_tokens' } } })).retry, false);
 });
@@ -41,7 +66,7 @@ test('empty completion recovery shares seven attempts and preserves the tool-res
   let calls = 0, alwaysEmpty = false;
   const bodies = [];
   const output = [{ type: 'custom_tool_call', id: 'ctc_ok', call_id: 'call_next', name: 'exec', input: 'text(364)', status: 'completed' }];
-  const good = event({ type: 'response.completed', response: { id: 'resp_ok', output } });
+  const good = event({ type: 'response.output_item.done', item: output[0] }) + event({ type: 'response.completed', response: { id: 'resp_ok', output } });
   const runtime = await createRuntime(directory, { policy: { budgetMs: 3000, rateDelays: [1], errorDelays: [1] }, fetchUpstream: async req => {
     bodies.push(await req.text()); calls++;
     return new Response(alwaysEmpty || calls === 1 ? event({ type: 'response.completed', response: { output: [] } }) : good, { headers: { 'content-type': 'text/event-stream' } });
@@ -50,6 +75,12 @@ test('empty completion recovery shares seven attempts and preserves the tool-res
   const request = () => new Request('https://example.invalid/v1/responses', { method: 'POST', body });
   assert.equal(await (await runtime.relay.send(request(), { id: 'recover', attempt: 1 })).text(), good);
   assert.equal(calls, 2); assert.ok(bodies.every(x => x === body));
+  const records = JSON.parse(await readFile(runtime.scheduler.file, 'utf8')).recent;
+  assert.equal(records.length, 2);
+  assert.equal(records[1].retry, true);
+  assert.equal(records[0].response.itemTypes[0].type, 'custom_tool_call');
+  assert.equal(records[0].requestId, 'recover');
+  assert.doesNotMatch(JSON.stringify(records), /text\(364\)|Checking\.|323/);
   alwaysEmpty = true; calls = 0;
   const failed = await runtime.relay.send(request(), { id: 'exhaust', attempt: 1 });
   assert.equal(failed.status, 502); assert.equal(calls, 7);
