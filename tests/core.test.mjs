@@ -40,6 +40,8 @@ test('临时错误和明确终态分类', () => {
   assert.equal(classify(429, 'application/json', '{}').retry, true);
   assert.equal(classify(529, 'application/json', '{}').retry, false);
   assert.equal(classify(200, 'application/json', JSON.stringify({ error: { message: 'concurrency limit exceeded' } })).rate, true);
+  assert.equal(classify(200, 'application/json', JSON.stringify({ error: { message: 'rate_limit_exceeded: busy' } })).rate, true);
+  assert.equal(classify(200, 'application/json', JSON.stringify({ error: { code: 400, message: "Invalid schema for 'get-rate-limit'" } })).retry, false);
   const failed = event({ type: 'response.failed', response: { error: { code: 'context_length_exceeded', message: 'too long' } } });
   assert.equal(classify(200, 'text/event-stream', failed).retry, false);
   assert.equal(classify(200, 'text/event-stream', event({ type: 'response.failed', response: { error: { code: 'server_error', message: 'upstream interrupted' } } })).retry, true);

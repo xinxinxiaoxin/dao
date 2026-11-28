@@ -259,3 +259,19 @@ test('an incomplete response keeps valid events but does not deliver corrupt SSE
   assert.equal(await res.text(), valid); assert.equal(sends, 1);
   assert.equal((await page.state()).recent[0].phase, '未完成');
 });
+
+test('a generic 400 distinguishes an explicit retry instruction from a tool name', async t => {
+  const schemaError = { code: 400, type: 'invalid_request_error', message: "Invalid schema for function 'get_rate_limit': missing required property 'type'." };
+  const replies = [() => Response.json({ error: { code: 400, message: 'Please retry later' } }, { status: 400 }), ok,
+    () => Response.json({ error: schemaError }), () => new Response('data: '+JSON.stringify({ type: 'error', error: schemaError })+'\n\n', { headers: { 'content-type': 'text/event-stream' } })];
+  const page = await fixture(t, () => replies.shift()());
+  page.runtime.relay.policy.errorDelays = [15];
+  await page.runtime.relay.send(request(), { id: 'busy', attempt: 1 });
+  for (const id of ['parameters-json', 'parameters-sse']) {
+    const res = await page.runtime.relay.send(request(), { id, attempt: 1 });
+    assert.match(await res.text(), /Invalid schema/);
+  }
+  const { errors } = (await page.state()).upstreamHistory;
+  assert.deepEqual(errors.map(row => [row.category, row.retryDelayMs, row.recovered]), [['other', null, false], ['other', null, false], ['service', 15, true]]);
+  assert.match(errors[2].message, /服务/);
+});
