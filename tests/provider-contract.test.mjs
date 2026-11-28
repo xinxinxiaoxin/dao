@@ -8,6 +8,8 @@ import { once } from 'node:events';
 import { createProvider } from '../lib/provider.mjs';
 import { createSettings } from '../lib/settings.mjs';
 
+const answer = () => Response.json({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'OK' }] }] });
+
 async function directory(t) {
   const dir = await mkdtemp(join(tmpdir(), 'dao-contract-'));
   t.after(async () => {
@@ -30,7 +32,7 @@ test('collaboration aliases preserve call IDs, past ciphertext and unrelated sch
   const dir = await directory(t);
   let sent;
   const hooks = await createProvider({ noPage: true, fetchUpstream: async request => {
-    sent = await request.json(); return Response.json({ id: 'fixture' });
+    sent = await request.json(); return answer();
   } })({ directory: dir });
   const settings = await createSettings(join(dir, 'qiandao-gateway'));
   await settings.save({ baseURL: 'https://example.invalid', maxConcurrency: 1, models: [] });
@@ -85,7 +87,7 @@ test('an occupied settings port does not prevent provider chat', async t => {
   console.warn = message => warnings.push(String(message));
   let hooks;
   try {
-    hooks = await createProvider({ fetchUpstream: async () => Response.json({ output: ['OK'] }) })({ directory: dir }, { settingsPort: occupied.address().port });
+    hooks = await createProvider({ fetchUpstream: answer })({ directory: dir }, { settingsPort: occupied.address().port });
   } finally { console.warn = originalWarn; }
   assert.equal(hooks.auth.provider, 'qiandao-gateway');
   assert.ok(warnings.some(text => text.includes('设置')));

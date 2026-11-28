@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, realpath, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -132,6 +132,39 @@ test('排队准入期限到期，冷却不占上游名额', async t => {
   assert.equal(granted, null);
   const state = await scheduler.snapshot();
   assert.equal(state.active, 0); assert.equal(state.queued, 0);
+});
+
+test('a request cannot acquire a slot after its deadline while waiting for the scheduler lock', async t => {
+  const { scheduler, settings } = await fixture(t);
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const entered = Promise.withResolvers(), unlock = Promise.withResolvers(), readLimit = Promise.withResolvers();
+  const holding = scheduler.transaction(async () => { entered.resolve(); await unlock.promise; });
+  await entered.promise;
+  const read = settings.read;
+  t.mock.method(settings, 'read', async () => { const value = await read(); readLimit.resolve(); return value; });
+  const deadline = Date.now() + 5000;
+  const waiting = scheduler.acquire(new AbortController().signal, deadline);
+  await readLimit.promise;
+  t.mock.timers.setTime(deadline);
+  unlock.resolve(); await holding;
+  assert.equal(await waiting, null);
+  assert.equal((await scheduler.snapshot()).attempts, 0);
+});
+
+test('polling a waiting queue and its status does not rewrite unchanged history', async t => {
+  const { scheduler } = await fixture(t);
+  const controller = new AbortController();
+  await scheduler.cooldown(Date.now() + 10000);
+  const waiting = scheduler.acquire(controller.signal, Date.now() + 3000);
+  try {
+    while (!(await scheduler.snapshot()).queued) await delay(5);
+    const old = new Date('2000-01-01T00:00:00Z');
+    await utimes(scheduler.file, old, old);
+    await delay(225);
+    assert.equal((await scheduler.snapshot()).queued, 1);
+    assert.equal((await stat(scheduler.file)).mtimeMs, old.getTime());
+  } finally { controller.abort(); await assert.rejects(waiting, { name: 'AbortError' }); }
+  assert.equal((await scheduler.snapshot()).queued, 0);
 });
 
 test('长Retry-After不得提前重发；取消关闭上游', async t => {

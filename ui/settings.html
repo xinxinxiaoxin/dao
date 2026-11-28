@@ -11,6 +11,7 @@
 <button id="connectionTab" type="button" role="tab" aria-selected="true" aria-controls="connectionPanel">连接与状态</button>
 <button id="errorsTab" type="button" role="tab" aria-selected="false" aria-controls="errorsPanel" tabindex="-1">报错记录 <span class="tab-count" id="tabErrorCount"></span></button>
 </nav>
+<p class="hint" id="connectionWarning" role="status" hidden></p>
 <div id="connectionPanel" role="tabpanel" aria-labelledby="connectionTab">
 <section><h2>连接与并发</h2><div id="settings">
 <label for="baseURL">千刀 Base URL</label><input id="baseURL" type="url" placeholder="https://api666.zzzcoding.org" required autocomplete="off"><p class="hint">填千刀的服务地址。只填域名时会使用 /v1；保存后用于新请求。</p>
@@ -43,7 +44,7 @@ const formatSeconds=ms=>seconds.format(ms/1000);
 const pageSize=20;
 const filters=$('errorFilters').querySelectorAll('button');
 const tabs=Array.from($('viewTabs').querySelectorAll('button'));
-let lastUpstreamHistory,report,selectedCategory='all',errorPage=0,cooldownUntil=0;
+let lastUpstreamHistory,report,selectedCategory='all',errorPage=0,cooldownUntil=0,refreshing=false,connected=false;
 function selectTab(selected){
   for(const tab of tabs){
     const active=tab===selected;
@@ -53,7 +54,7 @@ function selectTab(selected){
   }
 }
 function renderCooldown(){
-  const text=`${Math.max(0,Math.ceil((cooldownUntil-Date.now())/1000))} 秒`;
+  const text=connected?`${Math.max(0,Math.ceil((cooldownUntil-Date.now())/1000))} 秒`:'未知';
   $('cooldown').textContent=text;$('logCooldown').textContent=text;
 }
 function renderRetryPolicy(policy){
@@ -64,6 +65,7 @@ function renderRetryPolicy(policy){
 }
 function retryWait(row){
   if(Number.isFinite(row.actualRetryMs))return `实等 ${formatSeconds(row.actualRetryMs)} 秒`;
+  if(row.retrySkipped)return '实际未重试';
   if(Number.isFinite(row.retryDelayMs))return `最早 ${formatSeconds(row.retryDelayMs)} 秒后`;
   return row.retryDelayMs===null?'不再重试':'未记录';
 }
@@ -105,7 +107,7 @@ function renderErrorPage(){
       const td=document.createElement('td');td.append(value);tr.append(td);
     }
     const timing=document.createElement('td');timing.textContent=retryWait(row);
-    if(Number.isFinite(row.actualRetryMs)&&Number.isFinite(row.retryDelayMs)){
+    if((Number.isFinite(row.actualRetryMs)||row.retrySkipped)&&Number.isFinite(row.retryDelayMs)){
       const plan=document.createElement('span');plan.className='retry-plan';
       plan.textContent=`原计划最早 ${formatSeconds(row.retryDelayMs)} 秒后`;timing.append(plan);
     }
@@ -116,14 +118,16 @@ function renderErrorPage(){
 }
 async function api(path,options={}){const response=await fetch(new URL(path,location.href),{...options,headers:{'x-qiandao-page':token,...options.headers}});const data=await response.json();if(!response.ok)throw new Error(data.error||'请求失败');return data}
 async function refresh(){
+  if(refreshing)return;
+  refreshing=true;
   try{
-    const data=await api('api/state');
+    const data=await api('api/state',{signal:AbortSignal.timeout(5000)});
     if(!loaded){
       $('baseURL').value=data.settings.baseURL;$('maxConcurrency').value=data.settings.maxConcurrency;
       $('models').value=data.settings.models.join('\n');renderRetryPolicy(data.retryPolicy);loaded=true;
     }
     $('active').textContent=data.scheduler.active;$('queued').textContent=data.scheduler.queued;
-    cooldownUntil=data.scheduler.cooldownUntil;renderCooldown();
+    connected=true;cooldownUntil=data.scheduler.cooldownUntil;renderCooldown();
     const tbody=$('history').querySelector('tbody');tbody.replaceChildren();
     for(const row of data.recent){
       const tr=document.createElement('tr');
@@ -134,7 +138,13 @@ async function refresh(){
     }
     $('history').hidden=!data.recent.length;$('empty').hidden=!!data.recent.length;
     renderUpstreamHistory(data.upstreamHistory);
-  }catch(error){$('notice').textContent=error.message;if(!loaded)$('upstreamSummary').textContent='暂时读不到上游记录。';}
+    $('connectionWarning').hidden=true;
+  }catch{
+    connected=false;renderCooldown();
+    $('connectionWarning').textContent=loaded?'连接中断，显示上次读取的数据。':'暂时连不上 dao，正在重连。';
+    $('connectionWarning').hidden=false;
+    if(!loaded)$('upstreamSummary').textContent='暂时读不到上游记录。';
+  }finally{refreshing=false;}
 }
 async function saveSettings(){if($('save').disabled)return;for(const id of ['baseURL','maxConcurrency']){if(!$(id).checkValidity()){$('notice').textContent=$(id).validationMessage;$(id).reportValidity();return}}$('save').disabled=true;$('notice').textContent='正在保存……';try{const data=await api('api/settings',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({baseURL:$('baseURL').value,maxConcurrency:Number($('maxConcurrency').value),models:$('models').value})});$('baseURL').value=data.settings.baseURL;$('notice').textContent='已保存，设置已生效。';await refresh()}catch(error){$('notice').textContent=error.message}finally{$('save').disabled=false}}
 for(const tab of tabs){

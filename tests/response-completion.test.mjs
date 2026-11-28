@@ -87,3 +87,34 @@ test('empty completion recovery shares seven attempts and preserves the tool-res
   await runtime.relay.send(request(), { id: 'exhaust', attempt: 2 });
   assert.equal(calls, 7);
 });
+
+test('the chat relay hides unusable responses until the same request gets an answer', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'dao-delivery-'));
+  t.after(async () => { assert.equal(dirname(await realpath(directory)), await realpath(tmpdir())); await rm(directory, { recursive: true, force: true }); });
+  const stream = body => new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+  const answer = { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'whole answer' }] }] };
+  const failures = [
+    () => stream('data: [DONE]\n\n'),
+    () => stream(event({ type: 'error', code: 'server_error', message: 'busy' }) + 'data: [DONE]\n\n'),
+    () => new Response('{"object":"response","output":[', { headers: { 'content-type': 'application/json' } }),
+    () => Response.json({ status: 'in_progress', output: [] }),
+    () => Response.json({ error: { code: 429, message: '忙' } }),
+    () => Response.json({ error: { code: '503', message: '忙' } }),
+  ];
+  let first, sent;
+  const { relay } = await createRuntime(directory, { policy: { rateDelays: [0], errorDelays: [0] }, fetchUpstream: async request => {
+    sent.push(await request.text()); return sent.length === 1 ? first() : Response.json(answer);
+  } });
+  for (const [index, failure] of failures.entries()) {
+    first = failure; sent = [];
+    const body = JSON.stringify({ input: 'unchanged' });
+    const response = await relay.send(new Request('https://fixture.invalid/api/v1/responses', { method: 'POST', body }), { id: `bad-${index}`, attempt: 1 });
+    assert.deepEqual(sent, [body, body]);
+    assert.deepEqual(await response.json(), answer);
+  }
+  for (const [path, expected] of [['compact', { object: 'response.compaction', output: [] }], ['input_tokens', { object: 'response.input_tokens', input_tokens: 42 }]]) {
+    first = () => Response.json(expected); sent = [];
+    assert.deepEqual(await (await relay.send(new Request(`https://fixture.invalid/v1/responses/${path}`, { method: 'POST', body: '{}' }), { id: path, attempt: 1 })).json(), expected);
+    assert.equal(sent.length, 1);
+  }
+});

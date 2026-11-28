@@ -134,3 +134,56 @@ test('includes older retained attempts and keeps the rate denominator within the
   assert.equal(upstreamHistory.errors[0].retryDelayMs, undefined);
   assert.equal(upstreamHistory.errors[0].actualRetryMs, undefined);
 });
+
+test('redirects and explicit incomplete responses do not recover a preceding 429', async t => {
+  const answers = [() => new Response(null, { status: 307, headers: { location: '/maintenance' } }),
+    () => new Response('data: {"type":"response.incomplete","response":{"status":"incomplete","output":[]}}\n\n', { headers: { 'content-type': 'text/event-stream' } }),
+    () => Response.json({ status: 'incomplete', output: [] })];
+  let sends = 0, final;
+  const page = await fixture(t, async () => ++sends === 1 ? new Response(null, { status: 429 }) : final());
+  for (const [index, answer] of answers.entries()) {
+    sends = 0; final = answer;
+    const res = await page.runtime.relay.send(request(), { id: `final-${index}`, attempt: 1 });
+    assert.equal(res.status, index === 0 ? 307 : 200);
+    assert.equal(await res.text(), await answer().text());
+    assert.equal(sends, 2);
+    const { upstreamHistory, recent } = await page.state();
+    assert.equal(upstreamHistory.errors.length, (index + 1) * 2);
+    assert.ok(upstreamHistory.errors.every(row => !row.recovered));
+    assert.equal(recent[0].phase, index === 0 ? '已失败' : '未完成');
+  }
+});
+
+test('service failures, numeric codes and explicit context errors retain their meaning across versions', async t => {
+  const replies = [() => Response.json({ error: { code: 503 } }),
+    () => new Response('data: {"type":"response.failed","response":{"error":{"code":"server_error"}}}\n\n', { headers: { 'content-type': 'text/event-stream' } }),
+    () => Response.json({ error: { code: 'invalid_request_error', message: 'context_length_exceeded' } }, { status: 400 })];
+  const page = await fixture(t, () => replies.shift()());
+  await page.runtime.scheduler.transaction(state => { state.recent = [
+    { time: 2, requestId: 'old', attempt: 2, status: 200, retry: false, reason: '', response: { endEvent: 'response.incomplete' } },
+    { time: 1, requestId: 'old', attempt: 1, status: 200, retry: false, reason: 503 },
+  ]; });
+  for (let index = 0; index < 3; index++) await page.runtime.relay.send(request());
+  const { errors } = (await page.state()).upstreamHistory;
+  assert.equal(errors.length, 5);
+  assert.match(errors[0].message, /对话太长/);
+  assert.equal(errors[1].category, 'service'); assert.doesNotMatch(errors[1].message, /没收到结束信号/);
+  for (const row of [errors[2], errors[4]]) {
+    assert.deepEqual([row.status, row.errorCode, row.category, row.recovered], [200, '503', 'service', false]);
+    assert.match(row.message, /服务暂时不可用/);
+  }
+});
+
+test('a planned retry that cannot start records its final outcome and original wait after reload', async t => {
+  const page = await fixture(t, () => new Response(null, { status: 429 }));
+  page.runtime.relay.policy.budgetMs = 1500;
+  page.runtime.relay.policy.rateDelays = [900];
+  const pending = page.runtime.relay.send(request(), { id: 'later-cooldown', attempt: 1 });
+  while (!(await page.state()).upstreamHistory.errors.length) await new Promise(resolve => setTimeout(resolve, 10));
+  await page.runtime.scheduler.cooldown(Date.now() + 5000);
+  assert.equal((await pending).status, 429);
+  await page.restart();
+  const { errors } = (await page.state()).upstreamHistory;
+  assert.equal(errors.length, 1);
+  assert.deepEqual([errors[0].retryDelayMs, errors[0].actualRetryMs, errors[0].retrySkipped], [900, undefined, true]);
+});

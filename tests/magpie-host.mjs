@@ -26,6 +26,7 @@ let remoteModels = ['gpt-6-astra', 'remote-old'], metadataClosed = false;
 let mode = 'pass', recover = 0, disconnected = false, active = 0, peak = 0;
 let emptyTurnSent = false;
 let longRetrySent = false;
+let firstFailure;
 let wireOutput = [];
 let matchWireTools = false;
 const holds = [];
@@ -83,6 +84,11 @@ const upstream = http.createServer(async (req, res) => {
   const body = JSON.parse(raw || '{}');
   captures.push({ body, url: req.url, headers: req.headers, at: Date.now() });
   active++; peak = Math.max(peak, active); res.once('close', () => { active--; });
+  if (firstFailure) {
+    const [type, payload] = firstFailure;
+    firstFailure = undefined;
+    res.writeHead(200, { 'content-type': type }); return res.end(payload);
+  }
   if (mode === 'handoff') return responseItems(res, ['spawn_agent','send_message','followup_task'].map(name => ({ type: 'function_call', id: `fc_${name}`, call_id: `call_${name}`, name: `collaboration__${name}`, status: 'completed', arguments: JSON.stringify({ message: 'Read the fixture.' }) })), 'resp_handoff');
   if (mode === 'tool-search') {
     const tools = [...body.tools || [], ...(body.input || []).filter(item => item.type === 'additional_tools').flatMap(item => item.tools)];
@@ -475,6 +481,21 @@ try {
   mode = 'context'; const beforeContext = captures.length;
   const failed = await post({ stream: true }); const errorEvent = await failed.text(); assert.match(errorEvent, /context_length_exceeded/); assert.equal(captures.length - beforeContext, 1);
   console.log('PASS: context limit reaches the client as an SSE failure, one upstream send');
+  mode = 'pass';
+  for (const [type, payload, stream] of [
+    ['text/event-stream', 'data: [DONE]\n\n', true],
+    ['text/event-stream', 'data: {"type":"error","code":"server_error","message":"discard-me"}\n\ndata: [DONE]\n\n', true],
+    ['application/json', '{"output":["discard-me"', false],
+    ['application/json', '{"error":{"code":429,"message":"忙"}}', false],
+  ]) {
+    const start = captures.length;
+    firstFailure = [type, payload];
+    const response = await post({ stream });
+    const text = await response.text();
+    assert.equal(response.status, 200); assert.match(text, /qiandao fixture OK/); assert.doesNotMatch(text, /discard-me/);
+    assert.equal(captures.length - start, 2); assert.deepEqual(captures[start].body, captures[start + 1].body);
+  }
+  console.log('PASS: empty SSE, failed SSE, truncated JSON and embedded 429 recover before the client sees an answer');
   mode = 'rate'; const beforeRate = captures.length;
   const beforeHistory = (await pageState()).upstreamHistory;
   const startedRate = Date.now();

@@ -10,6 +10,8 @@ A completed Responses result must contain something the client can use: an answe
 
 Restoring a Codex request retains its original `reasoning.context` and `reasoning.summary`. Only the selected effort is overlaid from Magpie's reasoning settings; the converted reasoning object does not replace the original one.
 
+The end-of-stream marker `[DONE]` does not replace a Responses completion. A service failure event, an invalid JSON body or a chat response without usable output can be retried before delivery. Numeric error codes embedded in a response use the same retry rules as HTTP status codes. A redirect is returned without following it; an explicit incomplete answer is forwarded without replay. Neither counts as a recovery in the error history. Compact and input-token responses are JSON operations, not chat answers.
+
 ## Limits and delays
 
 | Case | Handling |
@@ -23,6 +25,8 @@ Restoring a Codex request retains its original `reasoning.context` and `reasonin
 | Client cancellation or disconnection | Stop its queue, backoff and active upstream request |
 
 New attempts may start only within 300 seconds of the request entering dao. An already-started upstream attempt has a 900-second timeout. Queueing and waiting consume the admission window. Thus 300 seconds is not an unconditional total response timeout. The rate-limit delays total 139 seconds, before queueing and execution time. Concurrency and cooldown are shared across models, accounts and overlapping plugin hosts; queueing and backoff do not occupy execution slots. The default concurrency is 5 and the user may change it live.
+
+The scheduler checks eligibility under its shared lock and the relay checks the deadline again before sending. Waiting for a slot and reading the settings page use read-only snapshots. A planned retry that expires or is cancelled before sending is marked as skipped; its original planned wait remains visible.
 
 The 30-second exception applies once to the first long `Retry-After`, even if that header first appears after earlier attempts. For example, `Retry-After: 120` waits 30 seconds once; if the next response says `Retry-After: 90`, it waits 90 seconds. Both seconds and HTTP-date headers are supported. A missing header does not reset the exception. Shared cooldowns can delay the retry longer, and neither the attempt cap nor the 300-second admission window is extended.
 
