@@ -238,3 +238,24 @@ test('HTML 429 uses the rate-limit schedule and a failed JSON 400 remains a requ
   assert.deepEqual(errors.map(row => [row.category, row.retryDelayMs]), [['other', null], ['rate', 15]]);
   assert.match(errors[0].message, /参数/);
 });
+
+test('an explicit upstream rate limit wins over a generic 400 wrapper, not over a quota refusal', async t => {
+  const note = 'exceeded retry limit, last status: 429';
+  const replies = [() => Response.json({ error: { code: 400, message: note } }), ok,
+    () => Response.json({ error: { code: 400, type: 'insufficient_quota', message: note } })];
+  const page = await fixture(t, () => replies.shift()());
+  page.runtime.relay.policy.rateDelays = [25];
+  await page.runtime.relay.send(request(), { id: 'limited', attempt: 1 });
+  await page.runtime.relay.send(request(), { id: 'quota', attempt: 1 });
+  const { errors } = (await page.state()).upstreamHistory;
+  assert.deepEqual(errors.map(row => [row.errorCode, row.retryDelayMs, row.recovered]), [['400', null, false], ['400', 25, true]]);
+});
+
+test('an incomplete response keeps valid events but does not deliver corrupt SSE data or retry', async t => {
+  let sends = 0;
+  const valid = 'data: {"type":"response.output_text.delta","delta":"partial"}\n\nevent: response.incomplete\ndata: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}\n\n';
+  const page = await fixture(t, () => { sends++; return new Response('data: {broken\n\n' + valid, { headers: { 'content-type': 'text/event-stream' } }); });
+  const res = await page.runtime.relay.send(request(), { id: 'limited-output', attempt: 1 });
+  assert.equal(await res.text(), valid); assert.equal(sends, 1);
+  assert.equal((await page.state()).recent[0].phase, '未完成');
+});

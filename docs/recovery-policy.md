@@ -12,7 +12,7 @@ Restoring a Codex request retains its original `reasoning.context` and `reasonin
 
 The end-of-stream marker `[DONE]` does not replace a Responses completion. A service failure event, an invalid JSON body or a chat response without usable output can be retried before delivery. Numeric error codes embedded in a response use the same retry rules as HTTP status codes. A redirect is returned without following it; an explicit incomplete answer is forwarded without replay. Neither counts as a recovery in the error history. Compact and input-token responses are JSON operations, not chat answers.
 
-If a terminal error follows text or tool events, only the error is forwarded. The response ID and error details remain available, but a host callback cannot replay a tool from that failed attempt. A redirect with an HTML body remains a redirect; an HTML 429 still uses the rate-limit schedule.
+If a terminal error follows text or tool events, only the error is forwarded. The response ID and error details remain available, but a host callback cannot replay a tool from that failed attempt. Overlapping callbacks for one request also receive a successful tool batch only once. Explicit incomplete responses keep their valid events without retransmitting malformed data. A redirect with an HTML body remains a redirect; an HTML 429 still uses the rate-limit schedule.
 
 ## Limits and delays
 

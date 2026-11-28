@@ -74,6 +74,26 @@ test('同一请求正在恢复时再次调用不会重复发送', async t => {
   assert.equal(calls, 1);
 });
 
+test('overlapping host callbacks deliver a successful client tool only to the original caller', async t => {
+  const { scheduler } = await fixture(t);
+  const tool = { type: 'function_call', call_id: 'only-once', name: 'write', arguments: '{}' };
+  for (const stream of [true, false]) {
+    const started = Promise.withResolvers(), finish = Promise.withResolvers();
+    let sends = 0;
+    const relay = new Relay(scheduler, { fetchUpstream: async () => {
+      sends++; started.resolve(); await finish.promise;
+      const response = { status: 'completed', output: [tool] };
+      return stream ? new Response(event({ type: 'response.output_item.done', item: tool }) + event({ type: 'response.completed', response }), { headers: { 'content-type': 'text/event-stream' } }) : Response.json(response);
+    } });
+    const first = relay.send(request(), { id: 'overlap', attempt: 1 }); await started.promise;
+    const duplicate = relay.send(request(), { id: 'overlap', attempt: 2 }); finish.resolve();
+    assert.match(await (await first).text(), /only-once/);
+    const other = await duplicate;
+    assert.equal(other.status, 409); assert.doesNotMatch(await other.text(), /only-once/);
+    assert.equal(sends, 1);
+  }
+});
+
 test('整段缓存丢弃失败片段，完成后仅交付成功结果', async t => {
   const { scheduler } = await fixture(t);
   let calls = 0;
