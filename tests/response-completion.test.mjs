@@ -96,6 +96,7 @@ test('the chat relay hides unusable responses until the same request gets an ans
   const failures = [
     () => stream('data: [DONE]\n\n'),
     () => stream(event({ type: 'error', code: 'server_error', message: 'busy' }) + 'data: [DONE]\n\n'),
+    () => stream('data: {"broken":\n\n' + event({ type: 'response.output_item.done', item: answer.output[0] }) + event({ type: 'response.completed', response: answer })),
     () => new Response('{"object":"response","output":[', { headers: { 'content-type': 'application/json' } }),
     () => Response.json({ status: 'in_progress', output: [] }),
     () => Response.json({ error: { code: 429, message: '忙' } }),

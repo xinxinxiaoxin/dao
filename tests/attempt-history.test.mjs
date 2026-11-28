@@ -187,3 +187,54 @@ test('a planned retry that cannot start records its final outcome and original w
   assert.equal(errors.length, 1);
   assert.deepEqual([errors[0].retryDelayMs, errors[0].actualRetryMs, errors[0].retrySkipped], [900, undefined, true]);
 });
+
+test('an HTML redirect is preserved without following or retrying it', async t => {
+  let sends = 0;
+  const page = await fixture(t, () => ++sends === 1 ? new Response(null, { status: 429 }) : new Response('<html>please retry later</html>', { status: 302, headers: { location: '/maintenance', 'content-type': 'text/html' } }));
+  const result = await page.runtime.relay.send(request(), { id: 'html-redirect', attempt: 1 });
+  assert.equal(result.status, 302); assert.equal(result.headers.get('location'), '/maintenance');
+  assert.equal(sends, 2);
+  assert.ok((await page.state()).upstreamHistory.errors.every(row => !row.recovered));
+});
+
+test('terminal SSE errors never deliver earlier tool events, even on repeated host callbacks', async t => {
+  let code, sends = 0;
+  const tool = { type: 'function_call', name: 'write', call_id: 'discard-call', arguments: '{}' };
+  const frame = value => `event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`;
+  const page = await fixture(t, () => {
+    sends++;
+    const body = frame({ type: 'response.output_text.delta', delta: 'discard-text' }) + frame({ type: 'response.output_item.done', item: tool })
+      + frame({ type: 'response.failed', response: { id: 'resp_keep', status: 'failed', output: [tool], error: { code, message: 'request refused' } } }) + 'data: [DONE]\n\n';
+    return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+  });
+  for (code of [400, 401, 404]) {
+    sends = 0;
+    for (const attempt of [1, 2]) {
+      const res = await page.runtime.relay.send(request(), { id: `client-error-${code}`, attempt });
+      assert.equal(res.status, 200);
+      const text = await res.text();
+      assert.match(text, /response\.failed/); assert.match(text, /resp_keep/); assert.match(text, new RegExp(`"code":${code}`));
+      assert.doesNotMatch(text, /discard-call|discard-text|output_item\.done/);
+    }
+    assert.equal(sends, 1);
+  }
+});
+
+test('exhausted embedded numeric rate limits retain 429 at the client boundary', async t => {
+  const page = await fixture(t, () => Response.json({ error: { code: 429, message: '忙' } }));
+  const response = await page.runtime.relay.send(request());
+  assert.equal(response.status, 429);
+  assert.deepEqual((await page.state()).upstreamHistory.errors.map(row => [row.status, row.errorCode]), [[200, '429']]);
+});
+
+test('HTML 429 uses the rate-limit schedule and a failed JSON 400 remains a request error', async t => {
+  const replies = [() => new Response('<html>closed</html>', { status: 429, headers: { 'content-type': 'text/html' } }), ok,
+    () => Response.json({ status: 'failed', error: { code: 400, message: 'bad parameters' } })];
+  const page = await fixture(t, () => replies.shift()());
+  page.runtime.relay.policy.rateDelays = [15];
+  await page.runtime.relay.send(request(), { id: 'html-429', attempt: 1 });
+  await page.runtime.relay.send(request(), { id: 'json-400', attempt: 1 });
+  const { errors } = (await page.state()).upstreamHistory;
+  assert.deepEqual(errors.map(row => [row.category, row.retryDelayMs]), [['other', null], ['rate', 15]]);
+  assert.match(errors[0].message, /参数/);
+});

@@ -156,7 +156,11 @@ const upstream = http.createServer(async (req, res) => {
   if (mode === 'auth') { res.writeHead(401, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { code: 'invalid_api_key', message: 'invalid key' } })); }
   if (mode === 'closed') { res.writeHead(403, { 'content-type': 'text/html' }); return res.end('<html>Not open</html>'); }
   if (mode === 'tier-rejected') { res.writeHead(400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { code: 'unsupported_parameter', message: 'Unsupported parameter: service_tier' } })); }
-  if (mode === 'context') { res.writeHead(200, { 'content-type': 'text/event-stream' }); return res.end('event: response.failed\ndata: '+JSON.stringify({ type: 'response.failed', response: { id: 'resp_failed', status: 'failed', error: { code: 'context_length_exceeded', message: 'fixture context limit' } } })+'\n\n'); }
+  if (mode === 'context') {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const tool = { type: 'function_call', call_id: 'discard-tool', name: 'write', arguments: '{}' };
+    return res.end('data: '+JSON.stringify({ type: 'response.output_item.done', item: tool })+'\n\nevent: response.failed\ndata: '+JSON.stringify({ type: 'response.failed', response: { id: 'resp_failed', status: 'failed', output: [tool], error: { code: 'context_length_exceeded', message: 'fixture context limit' } } })+'\n\n');
+  }
   if (mode === 'slow') await delay(180);
   reply(res, body, body.model);
 });
@@ -479,7 +483,7 @@ try {
   assert.equal(peak, 1);
   console.log('PASS: shared concurrency survives plugin host reload, in-flight response completes');
   mode = 'context'; const beforeContext = captures.length;
-  const failed = await post({ stream: true }); const errorEvent = await failed.text(); assert.match(errorEvent, /context_length_exceeded/); assert.equal(captures.length - beforeContext, 1);
+  const failed = await post({ stream: true }); const errorEvent = await failed.text(); assert.match(errorEvent, /context_length_exceeded/); assert.doesNotMatch(errorEvent, /discard-tool/); assert.equal(captures.length - beforeContext, 1);
   console.log('PASS: context limit reaches the client as an SSE failure, one upstream send');
   mode = 'pass';
   for (const [type, payload, stream] of [

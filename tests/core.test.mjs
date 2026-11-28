@@ -135,20 +135,42 @@ test('排队准入期限到期，冷却不占上游名额', async t => {
 });
 
 test('a request cannot acquire a slot after its deadline while waiting for the scheduler lock', async t => {
-  const { scheduler, settings } = await fixture(t);
+  const { scheduler } = await fixture(t);
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
-  const entered = Promise.withResolvers(), unlock = Promise.withResolvers(), readLimit = Promise.withResolvers();
+  const entered = Promise.withResolvers(), unlock = Promise.withResolvers(), waitingForLock = Promise.withResolvers();
   const holding = scheduler.transaction(async () => { entered.resolve(); await unlock.promise; });
   await entered.promise;
-  const read = settings.read;
-  t.mock.method(settings, 'read', async () => { const value = await read(); readLimit.resolve(); return value; });
+  const transaction = scheduler.transaction.bind(scheduler);
+  t.mock.method(scheduler, 'transaction', (...args) => { waitingForLock.resolve(); return transaction(...args); });
   const deadline = Date.now() + 5000;
   const waiting = scheduler.acquire(new AbortController().signal, deadline);
-  await readLimit.promise;
+  await waitingForLock.promise;
   t.mock.timers.setTime(deadline);
   unlock.resolve(); await holding;
   assert.equal(await waiting, null);
   assert.equal((await scheduler.snapshot()).attempts, 0);
+});
+
+test('a host waiting for the lock respects a concurrency limit lowered before admission', async t => {
+  const { scheduler, settings } = await fixture(t, 2);
+  const waiter = new Scheduler(settings);
+  const controller = new AbortController();
+  const deadline = Date.now() + 5000;
+  const release = await scheduler.acquire(controller.signal, deadline);
+  const entered = Promise.withResolvers(), unlock = Promise.withResolvers(), waitingForLock = Promise.withResolvers();
+  const holding = scheduler.transaction(async () => { entered.resolve(); await unlock.promise; });
+  await entered.promise;
+  const transaction = waiter.transaction.bind(waiter);
+  t.mock.method(waiter, 'transaction', (...args) => { waitingForLock.resolve(); return transaction(...args); });
+  const waiting = waiter.acquire(controller.signal, deadline);
+  await waitingForLock.promise;
+  try { await settings.save({ ...(await settings.read()), maxConcurrency: 1 }); }
+  finally { unlock.resolve(); await holding; }
+  try {
+    let state;
+    do { await delay(5); state = await scheduler.snapshot(); } while (!state.queued && state.active === 1 && Date.now() < deadline);
+    assert.deepEqual([state.active, state.queued], [1, 1]);
+  } finally { controller.abort(); await waiting.catch(() => {}); await release(); }
 });
 
 test('polling a waiting queue and its status does not rewrite unchanged history', async t => {
